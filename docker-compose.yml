@@ -1,0 +1,120 @@
+name: alis
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Run ./scripts/install.sh first.}
+      POSTGRES_DB: ${POSTGRES_DB:-alis}
+    volumes:
+      - alis_postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alis} -d ${POSTGRES_DB:-alis}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./services/api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-alis}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-alis}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required. Run ./scripts/install.sh first.}
+      PAIRING_CODE: ${PAIRING_CODE:?PAIRING_CODE is required. Run ./scripts/install.sh first.}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-["http://localhost:5174","http://127.0.0.1:5174"]}
+      DEBUG: ${DEBUG:-false}
+      HEALTH_LLM_PROVIDER: ${HEALTH_LLM_PROVIDER:-ollama}
+      HEALTH_LLM_BASE_URL: ${HEALTH_LLM_BASE_URL:-http://host.docker.internal:11434}
+      HEALTH_LLM_MODEL: ${HEALTH_LLM_MODEL:-gpt-oss:20b}
+      HEALTH_LLM_THINK: ${HEALTH_LLM_THINK:-medium}
+      HEALTH_LLM_ADVICE_MAX_TOKENS: ${HEALTH_LLM_ADVICE_MAX_TOKENS:-180}
+      HEALTH_LLM_CHAT_MAX_TOKENS: ${HEALTH_LLM_CHAT_MAX_TOKENS:-1200}
+      HEALTH_LLM_CONTEXT_TOKENS: ${HEALTH_LLM_CONTEXT_TOKENS:-8192}
+      HEALTH_LLM_ADVICE_TIMEOUT_SECONDS: ${HEALTH_LLM_ADVICE_TIMEOUT_SECONDS:-12}
+      HEALTH_LLM_STREAM_FIRST_TOKEN_TIMEOUT_SECONDS: ${HEALTH_LLM_STREAM_FIRST_TOKEN_TIMEOUT_SECONDS:-90}
+      HEALTH_LLM_TIMEOUT_SECONDS: ${HEALTH_LLM_TIMEOUT_SECONDS:-180}
+      HEALTH_LLM_KEEP_ALIVE: ${HEALTH_LLM_KEEP_ALIVE:-4h}
+      NUTRITION_LLM_BASE_URL: ${NUTRITION_LLM_BASE_URL:-http://host.docker.internal:11434}
+      NUTRITION_VISION_MODEL: ${NUTRITION_VISION_MODEL:-qwen3-vl:30b}
+      NUTRITION_LLM_TIMEOUT_SECONDS: ${NUTRITION_LLM_TIMEOUT_SECONDS:-240}
+      NUTRITION_PHOTO_STORAGE_DIR: ${NUTRITION_PHOTO_STORAGE_DIR:-/app/storage/nutrition/photos}
+      NUTRITION_PHOTO_RETENTION: ${NUTRITION_PHOTO_RETENTION:-thumbnail_only}
+      NUTRITION_MAX_PHOTOS_PER_MEAL: ${NUTRITION_MAX_PHOTOS_PER_MEAL:-8}
+      NUTRITION_MAX_PHOTO_BYTES: ${NUTRITION_MAX_PHOTO_BYTES:-10485760}
+      NUTRITION_ALLOWED_PHOTO_CONTENT_TYPES: ${NUTRITION_ALLOWED_PHOTO_CONTENT_TYPES:-["image/jpeg","image/png","image/webp"]}
+      NUTRITION_JOB_STALE_AFTER_SECONDS: ${NUTRITION_JOB_STALE_AFTER_SECONDS:-1800}
+    volumes:
+      - alis_nutrition_photos:${NUTRITION_PHOTO_STORAGE_DIR:-/app/storage/nutrition/photos}
+    ports:
+      - "${API_PORT:-8010}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)); raise SystemExit(0 if data.get('status') == 'ready' else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nutrition-worker:
+    build:
+      context: ./services/api
+    command: ["nutrition-worker", "--interval", "${NUTRITION_WORKER_INTERVAL_SECONDS:-5}"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-alis}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-alis}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required. Run ./scripts/install.sh first.}
+      DEBUG: ${DEBUG:-false}
+      HEALTH_LLM_CONTEXT_TOKENS: ${HEALTH_LLM_CONTEXT_TOKENS:-8192}
+      HEALTH_LLM_KEEP_ALIVE: ${HEALTH_LLM_KEEP_ALIVE:-4h}
+      NUTRITION_LLM_BASE_URL: ${NUTRITION_LLM_BASE_URL:-http://host.docker.internal:11434}
+      NUTRITION_VISION_MODEL: ${NUTRITION_VISION_MODEL:-qwen3-vl:30b}
+      NUTRITION_LLM_TIMEOUT_SECONDS: ${NUTRITION_LLM_TIMEOUT_SECONDS:-240}
+      NUTRITION_PHOTO_STORAGE_DIR: ${NUTRITION_PHOTO_STORAGE_DIR:-/app/storage/nutrition/photos}
+      NUTRITION_PHOTO_RETENTION: ${NUTRITION_PHOTO_RETENTION:-thumbnail_only}
+      NUTRITION_MAX_PHOTOS_PER_MEAL: ${NUTRITION_MAX_PHOTOS_PER_MEAL:-8}
+      NUTRITION_MAX_PHOTO_BYTES: ${NUTRITION_MAX_PHOTO_BYTES:-10485760}
+      NUTRITION_ALLOWED_PHOTO_CONTENT_TYPES: ${NUTRITION_ALLOWED_PHOTO_CONTENT_TYPES:-["image/jpeg","image/png","image/webp"]}
+      NUTRITION_JOB_STALE_AFTER_SECONDS: ${NUTRITION_JOB_STALE_AFTER_SECONDS:-1800}
+    volumes:
+      - alis_nutrition_photos:${NUTRITION_PHOTO_STORAGE_DIR:-/app/storage/nutrition/photos}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  processor:
+    build:
+      context: ./services/processor
+    environment:
+      API_BASE_URL: http://api:8000
+      DEVICE_TOKEN: ${PROCESSOR_DEVICE_TOKEN:-}
+      PAIRING_CODE: ${PAIRING_CODE:?PAIRING_CODE is required. Run ./scripts/install.sh first.}
+      PROCESSOR_LOOP: ${PROCESSOR_LOOP:-true}
+      PROCESSOR_POLL_SECONDS: ${PROCESSOR_POLL_SECONDS:-15}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  portal:
+    build:
+      context: ./apps/portal
+    ports:
+      - "${PORTAL_PORT:-5174}:80"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  alis_postgres:
+  alis_nutrition_photos:

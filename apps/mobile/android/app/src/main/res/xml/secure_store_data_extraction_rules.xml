@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Auto Backup configuration for Android 12 and higher -->
+<data-extraction-rules>
+  <cloud-backup>
+    <include domain="sharedpref" path="."/>
+    <exclude domain="sharedpref" path="SecureStore"/>
+    <exclude domain="sharedpref" path="healthconnect_native"/>
+  </cloud-backup>
+  <device-transfer>
+    <include domain="sharedpref" path="."/>
+    <exclude domain="sharedpref" path="SecureStore"/>
+    <exclude domain="sharedpref" path="healthconnect_native"/>
+  </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,1 @@
+"""HealthConnect recompute worker."""

@@ -1,0 +1,6 @@
+<resources>
+  <color name="splashscreen_background">#FFFFFF</color>
+  <color name="colorPrimary">#023c69</color>
+  <color name="colorPrimaryDark">#ffffff</color>
+  <color name="alis_notification_color">#0F766E</color>
+</resources>
