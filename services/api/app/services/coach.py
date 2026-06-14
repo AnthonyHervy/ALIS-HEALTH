@@ -504,7 +504,10 @@ class CoachService:
         last_24h = windows.get("last_24h") or {}
         week = windows.get("week") or {}
         reliability = summary.get("source_reliability") or {}
-        activity_source = reliability.get("activity") or {}
+        steps_source = reliability.get("steps") or {}
+        steps_reliability_status = steps_source.get("status")
+        steps_reliability_needs_note = steps_reliability_status in {"partial", "corrected", "conflict"}
+        activity_source = steps_source if steps_reliability_needs_note else (reliability.get("activity") or {})
         selected_source = activity_source.get("selected_source_label") or ("selected source" if language == "en" else "source retenue")
         actions = CoachService._context_actions(context)
 
@@ -533,12 +536,27 @@ class CoachService:
                 f"{item.get('label')}: {item.get('action')}" for item in actions[:2]
             )
 
+        reliability_line = ""
+        if steps_reliability_needs_note:
+            reason = steps_source.get("coach_reason")
+            if reason:
+                reliability_line = (
+                    f" Step source note: {reason} "
+                    if language == "en"
+                    else f" Note sur la source des pas: {reason} "
+                )
+            elif language == "en":
+                reliability_line = f" Step source note: ALIS keeps {selected_source} because another step source looks partial. "
+            else:
+                reliability_line = f" Note sur la source des pas: ALIS retient {selected_source} car une autre source semble partielle. "
+
         if language == "en":
             return (
                 "The local model is taking too long, so here is a quick read from the ALIS summary already calculated. 🙂\n\n"
                 f"Over the last 24 h, I have {score_line}. "
                 f"For movement, ALIS keeps {int(last_24h.get('steps') or 0):,} steps via {selected_source}, "
                 f"with {int(last_24h.get('workout_minutes') or 0)} min of sport. "
+                f"{reliability_line}"
                 f"Over 7 days, the average is {int(week.get('average_daily_steps') or 0):,} steps/day and "
                 f"{int(week.get('workout_minutes') or 0)} min of sport.\n\n"
                 f"Sleep: {int(last_24h.get('sleep_minutes') or 0)} min. "
@@ -552,6 +570,7 @@ class CoachService:
             f"Sur les dernières 24 h, j'ai {score_line}. "
             f"Côté mouvement, ALIS retient {int(last_24h.get('steps') or 0):,} pas via {selected_source}, "
             f"avec {int(last_24h.get('workout_minutes') or 0)} min de sport. "
+            f"{reliability_line}"
             f"Sur 7 jours, la moyenne est à {int(week.get('average_daily_steps') or 0):,} pas/j et "
             f"{int(week.get('workout_minutes') or 0)} min de sport.\n\n"
             f"Sommeil: {int(last_24h.get('sleep_minutes') or 0)} min. "

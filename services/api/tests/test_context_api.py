@@ -184,6 +184,35 @@ def life_balance_batch() -> dict:
     return batch
 
 
+def corrected_steps_reliability_batch() -> dict:
+    return {
+        "source_type": "healthconnect",
+        "device_name": "Pixel Test",
+        "device_id": "pixel-test-1",
+        "data_start": "2026-06-14T00:00:00+00:00",
+        "data_end": "2026-06-14T18:00:00+00:00",
+        "raw_records": {
+            "Steps": [
+                {
+                    "startTime": "2026-06-14T08:00:00+00:00",
+                    "endTime": "2026-06-14T18:00:00+00:00",
+                    "count": 6000,
+                    "metadata": {"dataOrigin": "android", "id": "raw-android-steps"},
+                },
+                {
+                    "startTime": "2026-06-14T08:00:00+00:00",
+                    "endTime": "2026-06-14T18:00:00+00:00",
+                    "count": 15459,
+                    "metadata": {
+                        "dataOrigin": "com.garmin.android.apps.connectmobile",
+                        "id": "raw-garmin-steps",
+                    },
+                },
+            ]
+        },
+    }
+
+
 def incomplete_raw_activity_batch() -> dict:
     return {
         "source_type": "healthconnect",
@@ -962,6 +991,31 @@ async def test_dashboard_context_bundles_windows_sync_and_sources(test_app):
     assert payload["data_status"]["domains"]["sleep"]["status"] == "measured"
     assert payload["data_status"]["domains"]["activity"]["source"]
     assert payload["data_status"]["domains"]["nutrition"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_bundle_exposes_data_reliability_for_steps(test_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        await client.post("/api/v1/ingest/health", json=corrected_steps_reliability_batch(), headers=headers)
+        response = await client.post("/api/v1/context/dashboard/refresh", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    steps_reliability = payload["data_reliability"]["metrics"]["steps"]
+    assert steps_reliability["status"] == "corrected"
+    assert steps_reliability["selected_source_label"] == "Garmin"
+    assert steps_reliability["selected_value"] == 15459
+    assert payload["coach_summary"]["source_reliability"]["steps"]["status"] == "corrected"
 
 
 @pytest.mark.asyncio
