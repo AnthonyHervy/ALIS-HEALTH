@@ -1,3 +1,5 @@
+import type { AppLanguage } from './i18n';
+
 export type UserSex = 'male' | 'female' | 'unspecified';
 
 export type UserProfile = {
@@ -38,26 +40,39 @@ export function sanitizeUserProfileDraft(input: Partial<UserProfile> | null | un
   };
 }
 
-export function buildCoachProfileContext(profile: UserProfile): string {
+export function buildCoachProfileContext(profile: UserProfile, language: AppLanguage = 'fr'): string {
   const normalized = normalizeUserProfile(profile);
-  const details = [
-    normalized.firstName ? `prénom ${normalized.firstName}` : null,
-    normalized.sex === 'male' ? 'sexe homme' : normalized.sex === 'female' ? 'sexe femme' : null,
-    normalized.age ? `âge ${normalized.age} ans` : null,
-    normalized.weightKg ? `poids ${normalized.weightKg} kg` : null,
-    normalized.heightCm ? `taille ${normalized.heightCm} cm` : null
-  ].filter(Boolean);
+  const details = language === 'en'
+    ? [
+      normalized.firstName ? `first name ${normalized.firstName}` : null,
+      normalized.sex === 'male' ? 'sex male' : normalized.sex === 'female' ? 'sex female' : null,
+      normalized.age ? `age ${normalized.age} years` : null,
+      normalized.weightKg ? `weight ${normalized.weightKg} kg` : null,
+      normalized.heightCm ? `height ${normalized.heightCm} cm` : null
+    ].filter(Boolean)
+    : [
+      normalized.firstName ? `prénom ${normalized.firstName}` : null,
+      normalized.sex === 'male' ? 'sexe homme' : normalized.sex === 'female' ? 'sexe femme' : null,
+      normalized.age ? `âge ${normalized.age} ans` : null,
+      normalized.weightKg ? `poids ${normalized.weightKg} kg` : null,
+      normalized.heightCm ? `taille ${normalized.heightCm} cm` : null
+    ].filter(Boolean);
 
   if (details.length === 0) {
     return '';
+  }
+  if (language === 'en') {
+    const firstNameInstruction = normalized.firstName ? ' If it feels natural, call the user by their first name.' : '';
+    return `User profile provided: ${details.join(', ')}.${firstNameInstruction}`;
   }
   const firstNameInstruction = normalized.firstName ? " Si c'est naturel, appelle l'utilisateur par son prénom." : '';
   return `Profil utilisateur renseigné: ${details.join(', ')}.${firstNameInstruction}`;
 }
 
-export function buildCoachMessageWithProfile(message: string, profile: UserProfile): string {
-  const context = buildCoachProfileContext(profile);
-  return context ? `${context}\n\nDemande utilisateur: ${message}` : message;
+export function buildCoachMessageWithProfile(message: string, profile: UserProfile, language: AppLanguage = 'fr'): string {
+  const context = buildCoachProfileContext(profile, language);
+  const requestLabel = language === 'en' ? 'User request' : 'Demande utilisateur';
+  return context ? `${context}\n\n${requestLabel}: ${message}` : message;
 }
 
 function normalizeNumber(value: string | undefined, options: { min: number; max: number; decimals: boolean }): string {

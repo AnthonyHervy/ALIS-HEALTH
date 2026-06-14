@@ -19,6 +19,7 @@
     "expo-background-fetch": "~13.0.6",
     "expo-file-system": "~18.0.12",
     "expo-image-picker": "~16.0.6",
+    "expo-localization": "~16.0.1",
     "expo-network": "~7.0.5",
     "expo-notifications": "~0.29.14",
     "expo-secure-store": "~14.0.0",

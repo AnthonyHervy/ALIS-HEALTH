@@ -265,6 +265,7 @@ class CoachChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     mode: Literal["coach", "plan"] = "coach"
     history: list[CoachMessage] = Field(default_factory=list)
+    language: Literal["fr", "en"] | None = None
 
 
 class CoachAdvice(BaseModel):

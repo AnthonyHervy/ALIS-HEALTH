@@ -26,7 +26,8 @@ const settings: Settings = {
   apiBaseUrl: 'http://alis.local:8010',
   pairingCode: 'pairing',
   deviceToken: 'device-token',
-  notificationsEnabled: true
+  notificationsEnabled: true,
+  language: 'system'
 };
 
 test('loads unified Health Connect sync metadata', async () => {
@@ -135,6 +136,30 @@ test('manual sync normalizes API base URL before syncing and refreshing native b
     settings.deviceToken,
     '2026-05-31T09:00:00.000Z'
   );
+});
+
+test('manual sync forwards the active language to the Health Connect sync', async () => {
+  const storage = createStorage();
+  const sync = jest.fn(async () => ({
+    syncedRecordCount: 5,
+    dataStart: '2026-05-31T08:00:00.000Z',
+    dataEnd: '2026-05-31T09:00:00.000Z',
+    syncMode: 'incremental' as const
+  }));
+  const saveNativeBackgroundSettings = jest.fn(async () => true);
+
+  await runManualHealthSync({
+    settings,
+    lastSyncAt: '2026-05-31T08:00:00.000Z',
+    language: 'en',
+    storage,
+    sync,
+    saveNativeBackgroundSettings
+  });
+
+  expect(sync).toHaveBeenCalledWith(expect.objectContaining({
+    language: 'en'
+  }));
 });
 
 test('manual sync rejects malformed API base URLs before syncing', async () => {

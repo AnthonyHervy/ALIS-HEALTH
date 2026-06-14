@@ -1,3 +1,5 @@
+import type { LanguagePreference } from './i18n';
+
 export type WindowKey = '24h' | '7d' | '30d';
 
 export type LifeBalanceScore = {
@@ -231,7 +233,54 @@ export type SourceConfig = {
   source_badge: string;
 };
 
+export type SourceDiagnosticMetric = {
+  metric: string;
+  label: string;
+  domain: string;
+  unit?: string | null;
+  status: 'received' | 'not_received';
+  selected_source?: string | null;
+  selected_source_label: string;
+  selected_value?: number | null;
+  selected_records: number;
+  latest_received_at?: string | null;
+  sources: Array<{
+    source: string;
+    source_label: string;
+    total: number;
+    records: number;
+    latest_received_at?: string | null;
+    selected: boolean;
+  }>;
+};
+
+export type SourceDiagnostics = {
+  generated_at?: string;
+  domains: Record<string, {
+    selected_source?: string | null;
+    selected_source_label: string;
+    metrics: Record<string, SourceDiagnosticMetric>;
+  }>;
+};
+
+export type CoachSummary = {
+  version: string;
+  generated_at?: string;
+  windows: Record<string, Record<string, unknown>>;
+  source_reliability?: Record<string, Record<string, unknown>>;
+  data_limitations?: string[];
+};
+
 export type DashboardData = {
+  snapshot_version?: string;
+  snapshot_status?: 'fresh' | 'stale' | 'empty' | 'refreshing';
+  snapshot_freshness?: {
+    status: 'fresh' | 'stale' | 'empty' | 'refreshing';
+    computed_at?: string | null;
+    source_sync_run_id?: string | null;
+    latest_sync_run_id?: string | null;
+    is_stale: boolean;
+  };
   generated_at: string;
   computed_at?: string;
   source_sync_run_id?: string | null;
@@ -245,6 +294,8 @@ export type DashboardData = {
   latest_sync_run: SyncRun | null;
   sync_summary: SyncRunSummary;
   source_config: SourceConfig;
+  source_diagnostics?: SourceDiagnostics;
+  coach_summary?: CoachSummary;
   data_status?: DataStatus;
 };
 
@@ -304,4 +355,5 @@ export type Settings = {
   pairingCode: string;
   deviceToken: string | null;
   notificationsEnabled: boolean;
+  language: LanguagePreference;
 };

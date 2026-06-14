@@ -1,5 +1,6 @@
 import { normalizeApiBaseUrl } from './apiBaseUrl';
 import { DEVICE_NAME } from './config';
+import type { AppLanguage } from './i18n';
 import type { AgentPrompt, CoachChatMessage, CoachGoals, CoachGoal, CoachStatus, DashboardData, Settings, SourceConfig } from './types';
 
 type FetchLike = typeof fetch;
@@ -13,6 +14,10 @@ class UnauthorizedError extends Error {
 
 export function cleanBaseUrl(value: string): string {
   return normalizeApiBaseUrl(value);
+}
+
+function languageHeader(language?: AppLanguage): Record<string, string> {
+  return language ? { 'Accept-Language': language } : {};
 }
 
 async function readJson<T>(fetchImpl: FetchLike, url: string, init: RequestInit): Promise<T> {
@@ -57,13 +62,13 @@ export function createAlisApiClient({ fetchImpl = fetch }: { fetchImpl?: FetchLi
   async function fetchDashboard(
     settings: Settings,
     save: SaveSettings,
-    options: { refresh?: boolean } = {}
+    options: { refresh?: boolean; language?: AppLanguage } = {}
   ): Promise<{ dashboard: DashboardData; token: string }> {
     let token = await ensureToken(fetchImpl, settings, save);
     try {
       return {
         token,
-        dashboard: await requestDashboard(fetchImpl, settings.apiBaseUrl, token, options.refresh)
+        dashboard: await requestDashboard(fetchImpl, settings.apiBaseUrl, token, options.refresh, options.language)
       };
     } catch (error) {
       if (!(error instanceof UnauthorizedError)) {
@@ -73,7 +78,7 @@ export function createAlisApiClient({ fetchImpl = fetch }: { fetchImpl?: FetchLi
       await save({ deviceToken: token });
       return {
         token,
-        dashboard: await requestDashboard(fetchImpl, settings.apiBaseUrl, token, options.refresh)
+        dashboard: await requestDashboard(fetchImpl, settings.apiBaseUrl, token, options.refresh, options.language)
       };
     }
   }
@@ -209,12 +214,14 @@ export function createAlisApiClient({ fetchImpl = fetch }: { fetchImpl?: FetchLi
     save,
     message,
     history,
+    language,
     onDelta
   }: {
     settings: Settings;
     save: SaveSettings;
     message: string;
     history: CoachChatMessage[];
+    language?: AppLanguage;
     onDelta: (chunk: string) => void;
   }): Promise<string> {
     const token = await ensureToken(fetchImpl, settings, save);
@@ -222,9 +229,10 @@ export function createAlisApiClient({ fetchImpl = fetch }: { fetchImpl?: FetchLi
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...languageHeader(language)
       },
-      body: JSON.stringify({ message, mode: 'coach', history })
+      body: JSON.stringify({ message, mode: 'coach', history, ...(language ? { language } : {}) })
     });
     if (!response.ok) {
       throw new Error(`ALIS Coach API ${response.status}`);
@@ -248,7 +256,7 @@ export function createAlisApiClient({ fetchImpl = fetch }: { fetchImpl?: FetchLi
         }
         const ready = pending.slice(0, completeUntil);
         pending = pending.slice(completeUntil + 2);
-        for (const chunk of parseSseText(ready)) {
+        for (const chunk of parseSseText(ready, language)) {
           fullText += chunk;
           onDelta(chunk);
         }
@@ -257,7 +265,7 @@ export function createAlisApiClient({ fetchImpl = fetch }: { fetchImpl?: FetchLi
     }
 
     const text = await response.text();
-    for (const chunk of parseSseText(text)) {
+    for (const chunk of parseSseText(text, language)) {
       fullText += chunk;
       onDelta(chunk);
     }
@@ -267,18 +275,18 @@ export function createAlisApiClient({ fetchImpl = fetch }: { fetchImpl?: FetchLi
   return { fetchDashboard, fetchSourceConfig, fetchAgentPrompt, saveAgentPrompt, fetchCoachGoals, saveCoachGoals, fetchCoachStatus, streamCoachChat };
 }
 
-async function requestDashboard(fetchImpl: FetchLike, apiBaseUrl: string, token: string, refresh = false): Promise<DashboardData> {
+async function requestDashboard(fetchImpl: FetchLike, apiBaseUrl: string, token: string, refresh = false, language?: AppLanguage): Promise<DashboardData> {
   return readJson<DashboardData>(
     fetchImpl,
     `${cleanBaseUrl(apiBaseUrl)}/api/v1/context/dashboard${refresh ? '/refresh' : ''}`,
     {
       method: refresh ? 'POST' : 'GET',
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}`, ...languageHeader(language) }
     }
   );
 }
 
-export function parseSseText(text: string): string[] {
+export function parseSseText(text: string, language: AppLanguage = 'fr'): string[] {
   return text
     .split('\n\n')
     .filter(Boolean)
@@ -287,7 +295,7 @@ export function parseSseText(text: string): string[] {
       if (event === 'error') {
         const data = block.match(/^data: (.*)$/m)?.[1] ?? '{}';
         const parsed = JSON.parse(data);
-        throw new Error(parsed.message || 'Erreur Coach IA');
+        throw new Error(parsed.message || (language === 'en' ? 'AI Coach error' : 'Erreur Coach IA'));
       }
       if (event !== 'delta') {
         return [];

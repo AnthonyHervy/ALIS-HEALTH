@@ -33,6 +33,7 @@ test('shows the assistant content once enough text has streamed or streaming is 
 
 test('uses a stable short loading label instead of streamed token text', () => {
   expect(coachLoadingLabel()).toBe('ALIS réfléchit');
-  expect(coachLoadingLabel('Génération de la réponse')).toBe('ALIS réfléchit');
+  expect(coachLoadingLabel('Génération de la réponse')).toBe('Génération de la réponse');
+  expect(coachLoadingLabel('Generating the answer')).toBe('Generating the answer');
   expect(coachLoadingLabel("J'étudie vos données du jour pour vous conseiller au mieux ...")).toBe('Analyse des données en cours');
 });

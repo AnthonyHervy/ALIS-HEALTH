@@ -1,4 +1,5 @@
 import { normalizeApiBaseUrl } from '../../apiBaseUrl';
+import type { AppLanguage } from '../../i18n';
 import { HealthConnectApi } from '../services/api';
 import { buildHealthBatchFromRawRecords, RAW_RECORD_TYPES, SYNC_RECORD_TYPES } from '../services/health-connect';
 
@@ -31,6 +32,7 @@ type SyncInput = {
   syncTrigger?: 'manual' | 'background';
   networkType?: string | null;
   hoursBack?: number;
+  language?: AppLanguage;
   now?: () => Date;
   healthConnect?: HealthConnectBridge;
   apiFactory?: (apiBaseUrl: string, deviceToken: string) => ApiClient;
@@ -159,7 +161,9 @@ function healthSyncLog(level: 'info' | 'warn', message: string) {
 
 export async function performHealthConnectSync(input: SyncInput): Promise<ManualSyncResult> {
   if (!input.apiBaseUrl || !input.deviceToken) {
-    throw new Error('Appareil non appairé. Appaire le téléphone avant de synchroniser.');
+    throw new Error(input.language === 'en'
+      ? 'Device not paired. Pair this phone before syncing.'
+      : 'Appareil non appairé. Appaire le téléphone avant de synchroniser.');
   }
 
   const apiBaseUrl = normalizeApiBaseUrl(input.apiBaseUrl);
@@ -169,7 +173,9 @@ export async function performHealthConnectSync(input: SyncInput): Promise<Manual
 
   const initialized = await healthConnect.initialize();
   if (!initialized) {
-    throw new Error('Health Connect indisponible sur ce téléphone.');
+    throw new Error(input.language === 'en'
+      ? 'Health Connect is unavailable on this phone.'
+      : 'Health Connect indisponible sur ce téléphone.');
   }
 
   const normalPermissions: Array<{ accessType: 'read'; recordType: string }> = RAW_RECORD_TYPES.map((recordType) => ({
@@ -179,7 +185,9 @@ export async function performHealthConnectSync(input: SyncInput): Promise<Manual
   const permissions = [...normalPermissions, ...SPECIAL_READ_PERMISSIONS];
   const granted = await healthConnect.requestPermission(permissions);
   if (granted.length === 0) {
-    throw new Error('Aucune permission Health Connect accordée.');
+    throw new Error(input.language === 'en'
+      ? 'No Health Connect permission granted.'
+      : 'Aucune permission Health Connect accordée.');
   }
 
   const hasHistoryAccess = hasGrantedPermission(granted, 'ReadHealthDataHistory');

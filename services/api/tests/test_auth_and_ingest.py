@@ -251,3 +251,55 @@ async def test_revoke_blocks_subsequent_ingest(test_app):
 
     assert revoked.status_code == 200
     assert rejected.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_rotate_replaces_token_and_revokes_previous_one(test_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        old_token = registered.json()["device_token"]
+        old_headers = {"Authorization": f"Bearer {old_token}"}
+
+        rotated = await client.post("/api/v1/auth/rotate", headers=old_headers)
+        new_token = rotated.json()["device_token"]
+        old_rejected = await client.get("/api/v1/sync-runs/latest", headers=old_headers)
+        new_accepted = await client.get(
+            "/api/v1/sync-runs/latest",
+            headers={"Authorization": f"Bearer {new_token}"},
+        )
+
+    assert rotated.status_code == 200
+    assert rotated.json()["user_id"] == registered.json()["user_id"]
+    assert new_token != old_token
+    assert old_rejected.status_code == 401
+    assert new_accepted.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_api_rate_limit_returns_429_when_token_exceeds_budget(test_app):
+    test_app.state.settings.api_rate_limit_per_minute = 2
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        first = await client.get("/api/v1/sync-runs/latest", headers=headers)
+        second = await client.get("/api/v1/sync-runs/latest", headers=headers)
+        limited = await client.get("/api/v1/sync-runs/latest", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert limited.status_code == 429
+    assert limited.json()["detail"] == "Rate limit exceeded"

@@ -1,3 +1,4 @@
+import type { AppLanguage } from './i18n';
 import type { DataStatus, LifeBalanceScore, OverviewContext, SyncRunSummary, WindowKey } from './types';
 
 export function formatDuration(minutes: number): string {
@@ -45,26 +46,38 @@ export function formatFrenchLongDate(date: string): string {
   }).format(new Date(`${date}T12:00:00`));
 }
 
-export function formatDailyValue(value: number, unit: 'pas' | 'sleep' | 'min'): string {
+export function formatEnglishLongDate(date: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long'
+  }).format(new Date(`${date}T12:00:00`));
+}
+
+export function formatDailyValue(value: number, unit: 'pas' | 'steps' | 'sleep' | 'min'): string {
   const rounded = Math.round(value || 0);
-  if (unit === 'pas' && rounded >= 1000) {
-    return `${rounded.toLocaleString('fr-FR', { notation: 'compact', maximumFractionDigits: 1 }).replace(/\s+/g, ' ')} pas`;
+  if ((unit === 'pas' || unit === 'steps') && rounded >= 1000) {
+    const locale = unit === 'steps' ? 'en-US' : 'fr-FR';
+    return `${rounded.toLocaleString(locale, { notation: 'compact', maximumFractionDigits: 1 }).replace(/\s+/g, ' ')} ${unit === 'steps' ? 'steps' : 'pas'}`;
   }
   if (unit === 'sleep') {
     return formatDuration(rounded);
   }
+  if (unit === 'steps') {
+    return `${rounded.toLocaleString('en-US')} steps`;
+  }
   return `${rounded.toLocaleString('fr-FR')} ${unit}`;
 }
 
-export function formatActivityLabel(activityType: string): string {
+export function formatActivityLabel(activityType: string, language: AppLanguage = 'fr'): string {
   if (['cycling', 'stationary_biking', 'spinning'].includes(activityType)) {
     return 'RPM';
   }
   if (activityType === 'strength_training') {
-    return 'Renforcement Musculaire';
+    return language === 'en' ? 'Strength training' : 'Renforcement Musculaire';
   }
   if (activityType === 'rowing') {
-    return 'Rame';
+    return language === 'en' ? 'Rowing' : 'Rame';
   }
   if (['running', 'running_treadmill'].includes(activityType)) {
     return 'Running';
@@ -177,7 +190,7 @@ function compactSourceName(source: string): string {
   return source;
 }
 
-export function formatSyncObservability(summary?: SyncRunSummary | null): {
+export function formatSyncObservability(summary?: SyncRunSummary | null, language: AppLanguage = 'fr'): {
   lastManual: string;
   lastBackground: string;
   nextBackground: string;
@@ -191,9 +204,9 @@ export function formatSyncObservability(summary?: SyncRunSummary | null): {
       lastManual: '-',
       lastBackground: '-',
       nextBackground: '-',
-      latestError: 'Aucune erreur récente',
-      records: formatRecordCount(0),
-      runs: '0 run · 0 succès · 0 erreur',
+      latestError: noRecentErrorLabel(language),
+      records: formatRecordCount(0, language),
+      runs: formatRunCount(0, 0, 0, language),
       network: '-'
     };
   }
@@ -202,16 +215,32 @@ export function formatSyncObservability(summary?: SyncRunSummary | null): {
     lastManual: summary.last_manual_at ? formatParisDateTime(summary.last_manual_at) : '-',
     lastBackground: summary.last_background_at ? formatParisDateTime(summary.last_background_at) : '-',
     nextBackground: summary.last_background_at ? formatParisDateTime(addHours(summary.last_background_at, 1)) : '-',
-    latestError: latestFailed?.error_message ?? 'Aucune erreur récente',
-    records: formatRecordCount(summary.records_received),
-    runs: `${summary.total_runs.toLocaleString('fr-FR')} run(s) · ${summary.success_runs.toLocaleString('fr-FR')} succès · ${summary.error_runs.toLocaleString('fr-FR')} erreur(s)`,
+    latestError: latestFailed?.error_message ?? noRecentErrorLabel(language),
+    records: formatRecordCount(summary.records_received, language),
+    runs: formatRunCount(summary.total_runs, summary.success_runs, summary.error_runs, language),
     network: summary.latest_network_type ?? '-'
   };
 }
 
-function formatRecordCount(count: number): string {
+function formatRecordCount(count: number, language: AppLanguage = 'fr'): string {
   const safe = Math.max(0, Math.round(count || 0));
-  return `${safe.toLocaleString('fr-FR')} ${safe > 1 ? 'enregistrements' : 'enregistrement'}`;
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
+  if (language === 'en') {
+    return `${safe.toLocaleString(locale)} ${safe === 1 ? 'record' : 'records'}`;
+  }
+  return `${safe.toLocaleString(locale)} ${safe > 1 ? 'enregistrements' : 'enregistrement'}`;
+}
+
+function formatRunCount(totalRuns: number, successRuns: number, errorRuns: number, language: AppLanguage): string {
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
+  if (language === 'en') {
+    return `${totalRuns.toLocaleString(locale)} run(s) · ${successRuns.toLocaleString(locale)} success · ${errorRuns.toLocaleString(locale)} error(s)`;
+  }
+  return `${totalRuns.toLocaleString(locale)} run(s) · ${successRuns.toLocaleString(locale)} succès · ${errorRuns.toLocaleString(locale)} erreur(s)`;
+}
+
+function noRecentErrorLabel(language: AppLanguage): string {
+  return language === 'en' ? 'No recent error' : 'Aucune erreur récente';
 }
 
 function addHours(timestamp: string, hours: number): string {

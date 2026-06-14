@@ -20,12 +20,16 @@ export function shouldShowCoachTyping({
 }
 
 export function coachLoadingLabel(label?: string): string {
-  const normalized = String(label ?? '').trim().toLowerCase();
+  const raw = String(label ?? '').trim();
+  const normalized = raw.toLowerCase();
   if (normalized.includes('séance')) {
     return 'Analyse de la séance en cours';
   }
   if (normalized.includes('données')) {
     return 'Analyse des données en cours';
+  }
+  if (raw) {
+    return raw;
   }
   return 'ALIS réfléchit';
 }

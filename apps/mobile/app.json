@@ -101,7 +101,8 @@
             "android.permission.health.READ_WHEELCHAIR_PUSHES"
           ]
         }
-      ]
+      ],
+      "expo-localization"
     ]
   }
 }

@@ -1,4 +1,5 @@
 import { formatActivityLabel, formatDuration } from './format';
+import type { AppLanguage } from './i18n';
 import type { OverviewContext, WorkoutHistoryItem } from './types';
 
 export const DAILY_ANALYSIS_PROMPT = [
@@ -8,6 +9,24 @@ export const DAILY_ANALYSIS_PROMPT = [
 ].join(' ');
 export const DAILY_ANALYSIS_LOADING_LABEL = "J'étudie vos données du jour pour vous conseiller au mieux ...";
 export const WORKOUT_ANALYSIS_LOADING_LABEL = "J'étudie votre séance et vos données du jour pour vous conseiller au mieux ...";
+export function dailyAnalysisPrompt(language: AppLanguage = 'fr'): string {
+  if (language === 'en') {
+    return [
+      'Can you review my health data for today and suggest the priorities?',
+      'Answer with a human, friendly and encouraging tone, like a coach who knows me.',
+      'Keep the priorities clear, but avoid a cold or mechanical format.'
+    ].join(' ');
+  }
+  return DAILY_ANALYSIS_PROMPT;
+}
+
+export function dailyAnalysisLoadingLabel(language: AppLanguage = 'fr'): string {
+  return language === 'en' ? 'I’m reviewing your day to give you the best advice...' : DAILY_ANALYSIS_LOADING_LABEL;
+}
+
+export function workoutAnalysisLoadingLabel(language: AppLanguage = 'fr'): string {
+  return language === 'en' ? 'I’m reviewing your workout and today’s data...' : WORKOUT_ANALYSIS_LOADING_LABEL;
+}
 const WORKOUT_KEY_BUCKET_MINUTES = 15;
 const LEGACY_WORKOUT_OVERLAP_TOLERANCE_MINUTES = 30;
 const MIN_NOTIFIABLE_WORKOUT_MINUTES = 10;
@@ -87,17 +106,20 @@ export function hasWorkoutBeenNotified(item: WorkoutHistoryItem, lastNotifiedKey
   );
 }
 
-export function workoutShortLabel(activityType: string): string {
+export function workoutShortLabel(activityType: string, language: AppLanguage = 'fr'): string {
   if (['running', 'running_treadmill'].includes(activityType)) {
     return 'RUN';
   }
   if (activityType === 'strength_training') {
-    return 'RENFO';
+    return language === 'en' ? 'STRENGTH' : 'RENFO';
   }
-  if (['cycling', 'stationary_biking', 'spinning'].includes(activityType)) {
+  if (activityType === 'cycling') {
+    return language === 'en' ? 'BIKE' : 'VÉLO';
+  }
+  if (['stationary_biking', 'spinning'].includes(activityType)) {
     return 'RPM';
   }
-  return formatActivityLabel(activityType).toUpperCase();
+  return formatActivityLabel(activityType, language).toUpperCase();
 }
 
 export function isNotifiableWorkout(item: WorkoutHistoryItem): boolean {
@@ -108,13 +130,19 @@ export function isNotifiableWorkout(item: WorkoutHistoryItem): boolean {
     && duration >= MIN_NOTIFIABLE_WORKOUT_MINUTES;
 }
 
-export function workoutNotificationCopy(item: WorkoutHistoryItem): { title: string; body: string } | null {
+export function workoutNotificationCopy(item: WorkoutHistoryItem, language: AppLanguage = 'fr'): { title: string; body: string } | null {
   if (!isNotifiableWorkout(item)) {
     return null;
   }
+  if (String(item.activity_type || '').trim().toLowerCase() === 'cycling') {
+    return {
+      title: language === 'en' ? 'Nice outdoor ride!' : 'Bravo pour cette sortie vélo !',
+      body: language === 'en' ? 'Open my analysis' : 'Découvrir mon analyse'
+    };
+  }
   return {
-    title: `Bravo pour ce ${workoutShortLabel(item.activity_type)} !`,
-    body: 'Découvrir mon analyse'
+    title: language === 'en' ? `Nice work on this ${workoutShortLabel(item.activity_type, language)}!` : `Bravo pour ce ${workoutShortLabel(item.activity_type, language)} !`,
+    body: language === 'en' ? 'Open my analysis' : 'Découvrir mon analyse'
   };
 }
 
@@ -146,9 +174,43 @@ export function selectWorkoutForAnalysis(history: WorkoutHistoryItem[], key?: st
   return latest;
 }
 
-export function buildWorkoutAnalysisPrompt(item: WorkoutHistoryItem, weekContext?: OverviewContext): string {
+export function buildWorkoutAnalysisPrompt(item: WorkoutHistoryItem, weekContext?: OverviewContext, language: AppLanguage = 'fr'): string {
   const activityType = String(item.activity_type || '').trim().toLowerCase();
   const workoutSummary = `${formatDuration(item.duration_minutes)}${distanceSummary(item)}`;
+  if (language === 'en') {
+    const base = [
+      `Analyze this ${formatActivityLabel(item.activity_type, language)} workout (${workoutSummary}).`,
+      'Put it in context with my sleep, recovery, activity today, recent load and goals.',
+      'Be concrete, human, encouraging, and do not invent missing data.',
+      'Answer like a real conversation, not a cold report: start with a natural motivating sentence, then 2 to 4 short paragraphs.',
+      'You may add a mini-list of 2 or 3 actions only if it truly helps, but it must not feel like a checklist.'
+    ];
+
+    if (['running', 'running_treadmill'].includes(activityType)) {
+      return [
+        ...base,
+        'This is a run: call it clearly a run and do not turn it into strength training.',
+        'Compare it to the other running sessions from the last 7 days.',
+        runningComparisonSummary(item, weekContext, language),
+        'End with a clear recommendation for what comes next: rest, active recovery, push a little more tomorrow, easy run, or another activity if that is smarter.'
+      ].join(' ');
+    }
+
+    if (activityType === 'strength_training') {
+      return [
+        ...base,
+        'For this strength session, prioritize nutrition, recovery, hydration, sleep, mobility and lifestyle advice.',
+        'Give simple targets for protein, useful post-workout carbs, 24-48 h recovery and fatigue signals to watch.',
+        'If nutrition data is unavailable, do not invent meals and keep the recommendation careful.',
+        'Keep a close, motivating coach tone, not a checklist.'
+      ].join(' ');
+    }
+
+    return [
+      ...base,
+      'Give me a clear read: positives, recovery watch-outs, and one concrete next step for the rest of the day.'
+    ].join(' ');
+  }
   const base = [
     `Analyse cette séance de ${formatActivityLabel(item.activity_type)} (${workoutSummary}).`,
     'Mets-la en perspective avec mon sommeil, ma récupération, mon activité du jour, ma charge récente et mes objectifs.',
@@ -162,7 +224,7 @@ export function buildWorkoutAnalysisPrompt(item: WorkoutHistoryItem, weekContext
       ...base,
       "C'est un running: nomme-le clairement comme un run et ne le transforme pas en renforcement.",
       'Compare-la aux autres séances de running des 7 derniers jours.',
-      runningComparisonSummary(item, weekContext),
+      runningComparisonSummary(item, weekContext, language),
       'Termine par une recommandation claire pour la suite : repos, récupération active, pousser un peu plus demain, sortie facile, ou autre activité si c’est plus intelligent.'
     ].join(' ');
   }
@@ -195,7 +257,7 @@ function workoutSortTimestamp(item: WorkoutHistoryItem): number {
   return parseWorkoutTime(item.end_time) ?? parseWorkoutTime(item.start_time) ?? 0;
 }
 
-function runningComparisonSummary(item: WorkoutHistoryItem, weekContext?: OverviewContext): string {
+function runningComparisonSummary(item: WorkoutHistoryItem, weekContext?: OverviewContext, language: AppLanguage = 'fr'): string {
   const currentKey = workoutKey(item);
   const recentRuns = (weekContext?.workouts.history ?? [])
     .filter((workout) => ['running', 'running_treadmill'].includes(String(workout.activity_type || '').toLowerCase()))
@@ -204,12 +266,16 @@ function runningComparisonSummary(item: WorkoutHistoryItem, weekContext?: Overvi
     .slice(0, 5);
 
   if (recentRuns.length === 0) {
-    return "Aucune autre séance running fiable n'est disponible sur 7 jours : compare surtout la charge perçue, le sommeil et la fraîcheur.";
+    return language === 'en'
+      ? 'No other reliable run is available over 7 days: compare mostly perceived load, sleep and freshness.'
+      : "Aucune autre séance running fiable n'est disponible sur 7 jours : compare surtout la charge perçue, le sommeil et la fraîcheur.";
   }
 
   const summaries = recentRuns.map((run) => {
     const distance = run.distance_meters > 0 ? `, ${formatKilometers(run.distance_meters)} km` : '';
     return `${run.date || run.start_time}: ${formatDuration(run.duration_minutes)}${distance}`;
   });
-  return `Séances running des 7 derniers jours à comparer : ${summaries.join(' ; ')}.`;
+  return language === 'en'
+    ? `Running sessions from the last 7 days to compare: ${summaries.join(' ; ')}.`
+    : `Séances running des 7 derniers jours à comparer : ${summaries.join(' ; ')}.`;
 }

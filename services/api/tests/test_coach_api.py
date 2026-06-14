@@ -34,6 +34,13 @@ def test_coach_chat_request_defaults():
     assert request.message == "Comment optimiser ma récupération ?"
     assert request.mode == "coach"
     assert request.history == []
+    assert request.language is None
+
+
+def test_coach_chat_request_accepts_english_language():
+    request = CoachChatRequest(message="How can I recover better?", language="en")
+
+    assert request.language == "en"
 
 
 @pytest.mark.asyncio
@@ -56,6 +63,19 @@ async def test_coach_system_prompt_invites_warm_encouraging_style():
     assert "puces uniquement" not in prompt
 
 
+@pytest.mark.asyncio
+async def test_coach_system_prompt_can_be_english():
+    service = CoachService(context_service=None, llm=None, model="gpt-oss:20b")
+
+    messages = await service._system_messages("user-1", language="en")
+    prompt = messages[0]["content"]
+
+    assert "You answer in English" in prompt
+    assert "encouraging" in prompt
+    assert "does not mean the user did not eat or drink" in prompt
+    assert "Tu réponds en français" not in prompt
+
+
 def test_coach_chat_instruction_prefers_conversation_over_cold_lists():
     service = CoachService(context_service=None, llm=None, model="gpt-oss:20b")
     messages = service._chat_messages(
@@ -72,6 +92,24 @@ def test_coach_chat_instruction_prefers_conversation_over_cold_lists():
     assert "paragraphes courts" in instruction
     assert "pas une checklist" in instruction
     assert "puces uniquement" not in instruction
+
+
+def test_coach_chat_instruction_can_be_english():
+    service = CoachService(context_service=None, llm=None, model="gpt-oss:20b")
+    messages = service._chat_messages(
+        system_messages=[],
+        context={"windows": {"last_24h": {}, "week": {}, "month": {}}},
+        message="Analyze my run",
+        history=[],
+        mode="coach",
+        language="en",
+    )
+
+    instruction = messages[-1]["content"]
+
+    assert "Concise conversational mobile answer" in instruction
+    assert "not a checklist" in instruction
+    assert "Réponse concise" not in instruction
 
 
 def test_today_advice_response_shape():
@@ -279,6 +317,126 @@ class FakeAgentSettings:
         return "Coach personnalisé: priorité endurance, force et récupération."
 
 
+class FakeCoachSummaryContext(FakeCoachContext):
+    async def dashboard_bundle(self, user_id):
+        last_24h = await super().overview(user_id, "24h")
+        week = await super().overview(user_id, "7d")
+        month = await super().overview(user_id, "30d")
+        last_24h["series"] = [{"date": "2026-05-24", "steps": 31508, "sleep_minutes": 268}]
+        return {
+            "windows": {
+                "last_24h": last_24h,
+                "week": week,
+                "month": month,
+            },
+            "coach_summary": {
+                "version": "2026-06-14.1",
+                "windows": {
+                    "last_24h": {
+                        "label": "24h",
+                        "sleep_minutes": 268,
+                        "steps": 31508,
+                        "workout_minutes": 115,
+                        "recovery_score": 50,
+                        "movement_score": 100,
+                    },
+                    "week": {
+                        "label": "7j",
+                        "average_daily_steps": 12000,
+                        "workout_minutes": 115,
+                    },
+                    "month": {
+                        "label": "30j",
+                        "average_daily_steps": 12000,
+                        "workout_minutes": 115,
+                    },
+                },
+                "source_reliability": {
+                    "activity": {
+                        "status": "received",
+                        "selected_source_label": "Garmin",
+                        "selected_value": 31508,
+                    }
+                },
+                "data_limitations": ["Scores indicatifs."],
+            },
+        }
+
+
+@pytest.mark.asyncio
+async def test_coach_service_prefers_precomputed_summary_without_raw_series():
+    service = CoachService(FakeCoachSummaryContext(), FakeCoachLlm(), model="qwen3.6:35b")
+
+    context = await service.build_context("user-1")
+
+    assert context["coach_summary"]["version"] == "2026-06-14.1"
+    assert context["coach_summary"]["windows"]["last_24h"]["steps"] == 31508
+    assert "windows" not in context
+    assert "series" not in json.dumps(context, ensure_ascii=False)
+
+
+def test_coach_fallback_chat_accepts_precomputed_summary_context():
+    context = {
+        "coach_summary": {
+            "windows": {
+                "last_24h": {
+                    "sleep_minutes": 420,
+                    "steps": 7420,
+                    "active_calories_kcal": 520,
+                    "workout_sessions": 1,
+                    "workout_minutes": 45,
+                    "sleep_score": 88,
+                    "recovery_score": 98,
+                    "movement_score": 64,
+                    "nutrition_meals": 0,
+                    "coach_actions": [
+                        {
+                            "label": "Récupération active",
+                            "priority": 1,
+                            "action": "Garde une marche légère et une soirée calme.",
+                        }
+                    ],
+                },
+                "week": {"average_daily_steps": 7900, "workout_minutes": 180},
+            },
+            "source_reliability": {
+                "activity": {
+                    "status": "received",
+                    "selected_source_label": "Garmin",
+                    "selected_value": 7420,
+                }
+            },
+        },
+        "data_limitations": ["Scores indicatifs."],
+    }
+
+    response = CoachService._fallback_chat(context, "Je pousse demain ?")
+
+    assert "résumé ALIS déjà calculé" in response
+    assert "Garmin" in response
+    assert "Nutrition non validée" in response
+    assert "Récupération active" in response
+    assert "7,420" in response or "7\u202f420" in response
+
+
+def test_coach_fallback_advice_accepts_precomputed_summary_context():
+    context = {
+        "coach_summary": {
+            "windows": {
+                "last_24h": {
+                    "sleep_minutes": 300,
+                    "workout_sessions": 0,
+                    "coach_actions": [],
+                }
+            }
+        }
+    }
+
+    advice = CoachService._fallback_advice(context)
+
+    assert advice["title"] == "Priorité sommeil"
+
+
 @pytest.mark.asyncio
 async def test_coach_service_builds_today_advice_from_context():
     llm = FakeCoachLlm()
@@ -459,6 +617,36 @@ async def test_today_advice_endpoint_returns_fallback_when_ollama_unavailable(te
 
 
 @pytest.mark.asyncio
+async def test_today_advice_endpoint_uses_accept_language(test_app, monkeypatch):
+    captured = {}
+
+    async def fake_today_advice(self, user_id, language="fr"):
+        captured["language"] = language
+        return {
+            "version": "healthconnect.coach.today_advice.v1",
+            "generated_at": "2026-06-14T10:00:00+00:00",
+            "model": "test-model",
+            "advice": {"title": "Today plan", "summary": "Keep it easy.", "action": "Recover gently."},
+            "actions": [],
+            "confidence": "medium",
+            "context_window": "24h",
+            "fallback": False,
+        }
+
+    monkeypatch.setattr(CoachService, "today_advice", fake_today_advice)
+
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+        token = await register_token(client)
+        response = await client.get(
+            "/api/v1/coach/today-advice",
+            headers={"Authorization": f"Bearer {token}", "Accept-Language": "en"},
+        )
+
+    assert response.status_code == 200
+    assert captured["language"] == "en"
+
+
+@pytest.mark.asyncio
 async def test_agent_prompt_endpoints_return_default_and_save_custom_prompt(test_app):
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
         token = await register_token(client)
@@ -538,7 +726,7 @@ async def test_coach_system_messages_include_enabled_goals():
 
 @pytest.mark.asyncio
 async def test_chat_endpoint_returns_response(test_app, monkeypatch):
-    async def fake_chat(self, user_id, message, history=None, mode="coach"):
+    async def fake_chat(self, user_id, message, history=None, mode="coach", language="fr"):
         return "Réponse coach locale."
 
     monkeypatch.setattr(CoachService, "chat", fake_chat)
@@ -556,8 +744,30 @@ async def test_chat_endpoint_returns_response(test_app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_endpoint_passes_requested_language(test_app, monkeypatch):
+    captured = {}
+
+    async def fake_chat(self, user_id, message, history=None, mode="coach", language="fr"):
+        captured["language"] = language
+        return "Local coach response."
+
+    monkeypatch.setattr(CoachService, "chat", fake_chat)
+
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+        token = await register_token(client)
+        response = await client.post(
+            "/api/v1/coach/chat",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "How can I recover?", "language": "en"},
+        )
+
+    assert response.status_code == 200
+    assert captured["language"] == "en"
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_endpoint_emits_sse(test_app, monkeypatch):
-    async def fake_stream(self, user_id, message, history=None, mode="coach"):
+    async def fake_stream(self, user_id, message, history=None, mode="coach", language="fr"):
         for chunk in ["Réponse ", "streamée"]:
             yield chunk
 
@@ -578,6 +788,29 @@ async def test_chat_stream_endpoint_emits_sse(test_app, monkeypatch):
     assert "Réponse " in body
     assert "streamée" in body
     assert "event: done" in body
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_endpoint_passes_requested_language(test_app, monkeypatch):
+    captured = {}
+
+    async def fake_stream(self, user_id, message, history=None, mode="coach", language="fr"):
+        captured["language"] = language
+        yield "English response"
+
+    monkeypatch.setattr(CoachService, "stream_chat", fake_stream)
+
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
+        token = await register_token(client)
+        response = await client.post(
+            "/api/v1/coach/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "How can I recover?", "language": "en"},
+        )
+
+    assert response.status_code == 200
+    assert captured["language"] == "en"
+    assert "English response" in response.text
 
 
 @pytest.mark.asyncio

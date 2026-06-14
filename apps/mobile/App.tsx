@@ -25,12 +25,14 @@ import NutritionScreen from './src/nutrition/NutritionScreen';
 import { createAlisApiClient } from './src/api';
 import { createNutritionApiClient } from './src/nutrition/api';
 import { DEFAULT_API_BASE_URL, DEFAULT_PAIRING_CODE } from './src/config';
+import { resolveAppLanguage, t, type AppLanguage, type LanguagePreference, type TranslationKey } from './src/i18n';
 import { parseCoachMarkdown } from './src/coachMarkdown';
 import {
   biometricChartData,
   biometricSummary,
   chartContextForWindow,
   displayContextForWindow,
+  formatSourceDiagnostics,
   lifeBalanceForToday,
   morningInsightForToday,
   nutritionInsight,
@@ -48,14 +50,13 @@ import { scorePanelInfoText } from './src/scoreInfo';
 import { playCoachSound } from './src/coachAudio';
 import { activeCoachGoals, inactiveCoachGoals, moveCoachGoalPriority, resequenceCoachGoals, toggleCoachGoalEnabled } from './src/coachGoals';
 import { coachLoadingLabel, shouldShowCoachTyping } from './src/coachUi';
-import { profileSaveButtonPresentation } from './src/profileSaveState';
 import {
-  DAILY_ANALYSIS_LOADING_LABEL,
-  DAILY_ANALYSIS_PROMPT,
-  WORKOUT_ANALYSIS_LOADING_LABEL,
   buildWorkoutAnalysisPrompt,
+  dailyAnalysisLoadingLabel,
+  dailyAnalysisPrompt,
   latestWorkoutCandidate,
   selectWorkoutForAnalysis,
+  workoutAnalysisLoadingLabel,
   workoutKey
 } from './src/workoutCoach';
 import {
@@ -64,6 +65,7 @@ import {
   formatDailyValue,
   formatDateLabel,
   formatDuration,
+  formatEnglishLongDate,
   formatFrenchLongDate,
   formatParisDateTime,
   formatParisTime,
@@ -127,7 +129,8 @@ export default function App() {
     apiBaseUrl: DEFAULT_API_BASE_URL,
     pairingCode: DEFAULT_PAIRING_CODE,
     deviceToken: null,
-    notificationsEnabled: true
+    notificationsEnabled: true,
+    language: 'system'
   });
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [windowKey, setWindowKey] = useState<WindowKey>('24h');
@@ -169,6 +172,8 @@ export default function App() {
 
   const context = dashboard ? displayContextForWindow(dashboard, windowKey) : null;
   const todayContext = dashboard?.windows.last_24h ?? null;
+  const language = useMemo(() => resolveAppLanguage(settings.language), [settings.language]);
+  const copy = useMemo(() => (key: TranslationKey) => t(language, key), [language]);
   const nutritionSettingsKey = useMemo(
     () => nutritionSettingsIdentity(settings),
     [settings.apiBaseUrl, settings.pairingCode, settings.deviceToken]
@@ -193,7 +198,8 @@ export default function App() {
         return loadDashboard(loaded, false);
       })
       .catch((error) => {
-        const message = error instanceof Error ? error.message : 'Erreur de chargement';
+        const fallbackLanguage = resolveAppLanguage(settingsRef.current.language);
+        const message = error instanceof Error ? error.message : fallbackLanguage === 'en' ? 'Loading error' : 'Erreur de chargement';
         setDashboardError(message);
         setStatus(message);
       })
@@ -251,7 +257,7 @@ export default function App() {
   }
 
   async function loadDashboard(nextSettings = settings, refresh = false) {
-    setStatus(refresh ? 'Recalcul du snapshot...' : 'Chargement du snapshot...');
+    setStatus(refresh ? language === 'en' ? 'Recomputing snapshot...' : 'Recalcul du snapshot...' : language === 'en' ? 'Loading snapshot...' : 'Chargement du snapshot...');
     setDashboardError(null);
     try {
       const result = await api.fetchDashboard(
@@ -259,7 +265,7 @@ export default function App() {
         async (next) => {
           await persistSettings(next, nextSettings);
         },
-        { refresh }
+        { refresh, language }
       );
       setDashboard(result.dashboard);
       dashboardRef.current = result.dashboard;
@@ -286,9 +292,9 @@ export default function App() {
       );
       setCoachGoals(goals.coachGoals);
       setDraftCoachGoals(goals.coachGoals.goals);
-      setStatus(`Mis à jour · ${formatParisDateTime(result.dashboard.computed_at ?? result.dashboard.generated_at)}`);
+      setStatus(`${language === 'en' ? 'Updated' : 'Mis à jour'} · ${formatParisDateTime(result.dashboard.computed_at ?? result.dashboard.generated_at)}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Dashboard indisponible';
+      const message = error instanceof Error ? error.message : language === 'en' ? 'Dashboard unavailable' : 'Dashboard indisponible';
       setDashboardError(message);
       setStatus(message);
       throw error;
@@ -321,7 +327,7 @@ export default function App() {
       return;
     }
     try {
-      await scheduleWorkoutAnalysisNotification(candidate.item);
+      await scheduleWorkoutAnalysisNotification(candidate.item, undefined, Platform.OS, language);
       lastWorkoutNotificationKeyRef.current = candidate.key;
       await saveLastWorkoutNotificationKey(candidate.key);
     } catch {
@@ -331,9 +337,9 @@ export default function App() {
 
   function startDailyCoachAnalysis() {
     setTab('coach');
-    void sendCoachMessage(DAILY_ANALYSIS_PROMPT, {
+    void sendCoachMessage(dailyAnalysisPrompt(language), {
       hiddenUser: true,
-      loadingLabel: DAILY_ANALYSIS_LOADING_LABEL
+      loadingLabel: dailyAnalysisLoadingLabel(language)
     });
   }
 
@@ -356,12 +362,14 @@ export default function App() {
       void saveLastWorkoutNotificationKey(keyToSave);
     }
     const prompt = workout
-      ? buildWorkoutAnalysisPrompt(workout, currentDashboard.windows.week)
-      : 'Analyse ma dernière séance reçue aujourd’hui avec mon sommeil, ma récupération, mon activité et mon profil.';
+      ? buildWorkoutAnalysisPrompt(workout, currentDashboard.windows.week, language)
+      : language === 'en'
+        ? 'Analyze my latest workout received today with my sleep, recovery, activity and profile.'
+        : 'Analyse ma dernière séance reçue aujourd’hui avec mon sommeil, ma récupération, mon activité et mon profil.';
     setTab('coach');
     void sendCoachMessage(prompt, {
       hiddenUser: true,
-      loadingLabel: WORKOUT_ANALYSIS_LOADING_LABEL
+      loadingLabel: workoutAnalysisLoadingLabel(language)
     });
   }
 
@@ -373,7 +381,7 @@ export default function App() {
       nutritionDiagnosticsRequestRef.current === requestId && nutritionSettingsKeyRef.current === requestSettingsKey;
 
     setNutritionDiagnosticsLoading(true);
-    setStatus('Diagnostic Nutrition...');
+    setStatus(language === 'en' ? 'Nutrition diagnostics...' : 'Diagnostic Nutrition...');
     try {
       const result = await nutritionApi.fetchDiagnostics(nextSettings, async (next) => {
         if (!isCurrentDiagnosticsRequest()) {
@@ -388,13 +396,13 @@ export default function App() {
       }
       setNutritionDiagnostics(result.diagnostics);
       setNutritionDatasetStatus(result.diagnostics.datasets);
-      setStatus('Diagnostic Nutrition terminé.');
+      setStatus(language === 'en' ? 'Nutrition diagnostics complete.' : 'Diagnostic Nutrition terminé.');
     } catch (error) {
       if (!isCurrentDiagnosticsRequest()) {
         return;
       }
       clearNutritionDiagnosticsState();
-      setStatus(error instanceof Error ? error.message : 'Diagnostic Nutrition indisponible');
+      setStatus(error instanceof Error ? error.message : language === 'en' ? 'Nutrition diagnostics unavailable' : 'Diagnostic Nutrition indisponible');
     } finally {
       if (isCurrentDiagnosticsRequest()) {
         setNutritionDiagnosticsLoading(false);
@@ -407,7 +415,7 @@ export default function App() {
     try {
       await loadDashboard(settings, true);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Actualisation impossible');
+      setStatus(error instanceof Error ? error.message : language === 'en' ? 'Refresh unavailable' : 'Actualisation impossible');
     } finally {
       setRefreshing(false);
     }
@@ -431,25 +439,34 @@ export default function App() {
 
   async function syncHealthNow() {
     if (!settings.deviceToken || healthSyncing) {
-      setStatus(settings.deviceToken ? 'Synchronisation déjà en cours.' : 'Appareil non appairé. Chargez ALIS une première fois.');
+      setStatus(settings.deviceToken
+        ? language === 'en' ? 'Sync already in progress.' : 'Synchronisation déjà en cours.'
+        : language === 'en' ? 'Device not paired. Load ALIS once first.' : 'Appareil non appairé. Chargez ALIS une première fois.');
       return;
     }
     const healthSyncCursor = currentHealthSyncCursor();
     setHealthSyncing(true);
-    setStatus(healthSyncCursor ? `Synchronisation des données santé depuis ${formatParisDateTime(healthSyncCursor)}...` : 'Première synchronisation des données santé...');
+    setStatus(healthSyncCursor
+      ? language === 'en' ? `Syncing health data since ${formatParisDateTime(healthSyncCursor)}...` : `Synchronisation des données santé depuis ${formatParisDateTime(healthSyncCursor)}...`
+      : language === 'en' ? 'First health data sync...' : 'Première synchronisation des données santé...');
     try {
       const result = await runManualHealthSync({
         settings,
-        lastSyncAt: healthSyncCursor
+        lastSyncAt: healthSyncCursor,
+        language
       });
       lastHealthSyncAtRef.current = result.dataEnd;
       setLastHealthSyncAt(result.dataEnd);
-      const modeLabel = result.syncMode === 'incremental' ? 'incrémentale' : result.syncMode === 'initial_full_history' ? 'historique complet' : 'initiale 30 jours';
-      setStatus(`Synchronisation ${modeLabel} terminée : ${result.syncedRecordCount} enregistrements envoyés.`);
+      const modeLabel = language === 'en'
+        ? result.syncMode === 'incremental' ? 'incremental' : result.syncMode === 'initial_full_history' ? 'full history' : 'initial 30-day'
+        : result.syncMode === 'incremental' ? 'incrémentale' : result.syncMode === 'initial_full_history' ? 'historique complet' : 'initiale 30 jours';
+      setStatus(language === 'en'
+        ? `${modeLabel} sync complete: ${result.syncedRecordCount} records sent.`
+        : `Synchronisation ${modeLabel} terminée : ${result.syncedRecordCount} enregistrements envoyés.`);
       await loadDashboard(settings, true);
       await restoreHealthSyncState(settings);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Synchronisation mobile impossible');
+      setStatus(error instanceof Error ? error.message : language === 'en' ? 'Mobile sync unavailable' : 'Synchronisation mobile impossible');
     } finally {
       setHealthSyncing(false);
     }
@@ -462,7 +479,7 @@ export default function App() {
       pairingCode: draftPairingCode.trim() || DEFAULT_PAIRING_CODE,
       deviceToken: null
     });
-    setStatus('Configuration enregistrée, ré-appairage...');
+    setStatus(language === 'en' ? 'Configuration saved, pairing again...' : 'Configuration enregistrée, ré-appairage...');
     await loadDashboard(next, false);
   }
 
@@ -470,15 +487,15 @@ export default function App() {
     invalidateNutritionDiagnostics();
     await clearDeviceToken();
     const next = await persistSettings({ deviceToken: null });
-    setStatus('Token effacé.');
+    setStatus(language === 'en' ? 'Token cleared.' : 'Token effacé.');
     await loadDashboard(next, false);
   }
 
   async function syncMorningNotifications(base = settings) {
-    const result = await enableMorningNotification();
+    const result = await enableMorningNotification(undefined, Platform.OS, language);
     if (!result.enabled) {
       await persistSettings({ notificationsEnabled: false }, base);
-      setStatus('Notifications refusées par Android.');
+      setStatus(language === 'en' ? 'Notifications denied by Android.' : 'Notifications refusées par Android.');
     }
     return result;
   }
@@ -488,14 +505,18 @@ export default function App() {
       const next = await persistSettings({ notificationsEnabled: true });
       const result = await syncMorningNotifications(next);
       if (result.enabled) {
-        setStatus('Notification quotidienne programmée à 10h30.');
+        setStatus(language === 'en' ? 'Daily notification scheduled at 10:30.' : 'Notification quotidienne programmée à 10h30.');
       }
       return;
     }
 
     await disableMorningNotification();
     await persistSettings({ notificationsEnabled: false });
-    setStatus('Notification quotidienne désactivée.');
+    setStatus(language === 'en' ? 'Daily notification disabled.' : 'Notification quotidienne désactivée.');
+  }
+
+  async function setLanguagePreference(languagePreference: LanguagePreference) {
+    await persistSettings({ language: languagePreference });
   }
 
   function updateDraftUserProfileField(key: keyof UserProfile, value: string | UserSex) {
@@ -509,7 +530,7 @@ export default function App() {
     setUserProfile(normalized);
     setDraftUserProfile(normalized);
     setProfileSaved(true);
-    setStatus('Profil sauvegardé !');
+    setStatus(copy('settings.profileSaved'));
   }
 
   function setCoachGoalEnabled(slug: string, enabled: boolean) {
@@ -524,14 +545,14 @@ export default function App() {
     if (draftCoachGoals.length === 0) {
       return;
     }
-    setStatus('Enregistrement des priorités coach...');
+    setStatus(language === 'en' ? 'Saving coach priorities...' : 'Enregistrement des priorités coach...');
     const orderedGoals = resequenceCoachGoals(draftCoachGoals);
     const saved = await api.saveCoachGoals(settings, async (next) => {
       await persistSettings(next);
     }, orderedGoals);
     setCoachGoals(saved.coachGoals);
     setDraftCoachGoals(saved.coachGoals.goals);
-    setStatus('Priorités du coach IA enregistrées.');
+    setStatus(language === 'en' ? 'AI coach priorities saved.' : 'Priorités du coach IA enregistrées.');
   }
 
   async function sendCoachMessage(
@@ -541,7 +562,7 @@ export default function App() {
     if (!prompt || coachStreaming) {
       return;
     }
-    const coachPrompt = buildCoachMessageWithProfile(prompt, userProfile);
+    const coachPrompt = buildCoachMessageWithProfile(prompt, userProfile, language);
     const userMessage: CoachChatMessage = { role: 'user', content: prompt, hidden: options.hiddenUser };
     const assistantMessage: CoachChatMessage = { role: 'assistant', content: '', loadingLabel: options.loadingLabel };
     setChatMessages((current) => options.hiddenUser ? [...current, assistantMessage] : [...current, userMessage, assistantMessage]);
@@ -571,6 +592,7 @@ export default function App() {
         },
         message: coachPrompt,
         history: visibleHistory,
+        language,
         onDelta: (chunk) => {
           setCoachPhase('streaming');
           if (!replySoundPlayed && !options.hiddenUser) {
@@ -588,12 +610,12 @@ export default function App() {
         }
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Coach indisponible';
+      const message = error instanceof Error ? error.message : language === 'en' ? 'Coach unavailable' : 'Coach indisponible';
       setChatMessages((current) => {
         const next = [...current];
         const last = next[next.length - 1];
         if (last?.role === 'assistant' && !last.content) {
-          next[next.length - 1] = { ...last, content: `Le Coach IA est indisponible pour le moment.\n\n${message}` };
+          next[next.length - 1] = { ...last, content: `${language === 'en' ? 'The AI Coach is unavailable for now.' : 'Le Coach IA est indisponible pour le moment.'}\n\n${message}` };
         }
         return next;
       });
@@ -614,7 +636,7 @@ export default function App() {
       <StatusBar style="dark" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboard}>
         <View style={[styles.shell, { paddingTop: headerTopPadding(Platform.OS, NativeStatusBar.currentHeight) }]}>
-          <Header tab={tab} status={headerStatus} loading={headerLoading} />
+          <Header tab={tab} status={headerStatus} loading={headerLoading} copy={copy} />
           <View style={styles.contentArea}>
             {tab === 'dashboard' ? (
               <ScrollView
@@ -638,6 +660,8 @@ export default function App() {
                     dashboardOrder={dashboardOrder}
                     onReorderVisible={reorderVisibleHomeBlocks}
                     onAnalyzeToday={startDailyCoachAnalysis}
+                    language={language}
+                    copy={copy}
                   />
                 ) : !loading && dashboardError ? (
                   <ErrorState
@@ -645,14 +669,15 @@ export default function App() {
                     apiUrl={settings.apiBaseUrl}
                     onRetry={() => loadDashboard(settings, false).catch(() => undefined)}
                     onConfig={() => setTab('config')}
+                    language={language}
                   />
                 ) : (
-                  <LoadingState label="Chargement de vos données santé..." />
+                  <LoadingState label={language === 'en' ? 'Loading your health data...' : 'Chargement de vos données santé...'} />
                 )}
               </ScrollView>
             ) : null}
             <View style={[styles.tabPane, tab !== 'nutrition' && styles.tabPaneHidden]}>
-              <NutritionScreen key={nutritionSettingsKey} embedded active={tab === 'nutrition'} />
+              <NutritionScreen key={nutritionSettingsKey} embedded active={tab === 'nutrition'} language={language} />
             </View>
             {tab === 'coach' ? (
               <CoachScreen
@@ -662,6 +687,7 @@ export default function App() {
                 isStreaming={coachStreaming}
                 coachPhase={coachPhase}
                 send={sendCoachMessage}
+                copy={copy}
               />
             ) : null}
             {tab === 'config' ? (
@@ -691,28 +717,32 @@ export default function App() {
                 saveConfiguration={saveConfiguration}
                 clearToken={clearTokenAndReload}
                 testApi={() => loadDashboard(settings, false)}
+                language={language}
+                languagePreference={settings.language}
+                setLanguagePreference={setLanguagePreference}
+                copy={copy}
               />
             ) : null}
           </View>
-          <MainTabs tab={tab} setTab={setTab} />
+          <MainTabs tab={tab} setTab={setTab} copy={copy} />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function Header({ tab, status, loading }: { tab: MainTab; status: string; loading: boolean }) {
-  const titles: Record<MainTab, string> = {
-    dashboard: "Aujourd'hui",
-    nutrition: 'Nutrition',
-    coach: 'Coach IA',
-    config: 'Paramètres'
+function Header({ tab, status, loading, copy }: { tab: MainTab; status: string; loading: boolean; copy: (key: TranslationKey) => string }) {
+  const titles: Record<MainTab, TranslationKey> = {
+    dashboard: 'tabs.dashboard',
+    nutrition: 'tabs.nutrition',
+    coach: 'tabs.coach',
+    config: 'tabs.config'
   };
   return (
     <View style={styles.header}>
       <View style={styles.headerTitleBlock}>
         <Text style={styles.eyebrow}>ALIS</Text>
-        <Text style={styles.title} numberOfLines={1}>{titles[tab]}</Text>
+        <Text style={styles.title} numberOfLines={1}>{copy(titles[tab])}</Text>
       </View>
       <View style={styles.statusPill}>
         {loading ? <ActivityIndicator size="small" color={theme.colors.brand} /> : null}
@@ -722,13 +752,19 @@ function Header({ tab, status, loading }: { tab: MainTab; status: string; loadin
   );
 }
 
-function MainTabs({ tab, setTab }: { tab: MainTab; setTab: (tab: MainTab) => void }) {
+function MainTabs({ tab, setTab, copy }: { tab: MainTab; setTab: (tab: MainTab) => void; copy: (key: TranslationKey) => string }) {
+  const labels: Record<MainTab, TranslationKey> = {
+    dashboard: 'tabs.dashboard',
+    nutrition: 'tabs.nutrition',
+    coach: 'tabs.coach',
+    config: 'tabs.config'
+  };
   return (
     <View style={styles.bottomTabs}>
       {MAIN_TABS.map(({ key, label, icon }) => (
         <Pressable key={key} onPress={() => setTab(key)} style={[styles.tabButton, tab === key && styles.tabButtonActive]}>
           <Text style={[styles.tabIcon, tab === key && styles.tabTextActive]}>{icon}</Text>
-          <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
+          <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{copy(labels[key]) || label}</Text>
         </Pressable>
       ))}
     </View>
@@ -749,7 +785,9 @@ function DashboardScreen({
   onSyncHealth,
   dashboardOrder,
   onReorderVisible,
-  onAnalyzeToday
+  onAnalyzeToday,
+  language,
+  copy
 }: {
   dashboard: DashboardData;
   context: OverviewContext;
@@ -765,10 +803,12 @@ function DashboardScreen({
   dashboardOrder: DashboardBlockKey[];
   onReorderVisible: (order: DashboardBlockKey[]) => void;
   onAnalyzeToday: () => void;
+  language: AppLanguage;
+  copy: (key: TranslationKey) => string;
 }) {
   const sleepDetails = sleepDetailsForToday(dashboard);
   const scores = lifeBalanceForToday(dashboard)?.scores ?? [];
-  const morningInsight = morningInsightForToday(dashboard);
+  const morningInsight = morningInsightForToday(dashboard, language);
   const chartContext = chartContextForWindow(context, dashboard.windows.week);
   const visibleOrder = useMemo(() => visibleDashboardBlocksForWindow(dashboardOrder, windowKey), [dashboardOrder, windowKey]);
   const handleDragEnd = (params: SortableGridDragEndParams<DashboardBlockKey>) => {
@@ -776,7 +816,7 @@ function DashboardScreen({
   };
   const renderBlock = (key: DashboardBlockKey) => {
     if (key === 'scores' && windowKey === '24h') {
-      return <ScorePanel scores={scores} dailyInsight={morningInsight} />;
+      return <ScorePanel scores={scores} dailyInsight={morningInsight} copy={copy} />;
     }
     if (key === 'morning' && windowKey === '24h' && morningInsight) {
       return <MorningCard title={morningInsight.title} message={morningInsight.message} status={morningInsight.status} />;
@@ -789,17 +829,18 @@ function DashboardScreen({
           lastHealthSyncAt={lastHealthSyncAt}
           lastBackgroundStatus={lastBackgroundStatus}
           onSync={onSyncHealth}
+          language={language}
         />
       );
     }
     if (key === 'coach' && windowKey === '24h') {
-      return <DailyCoachCta onOpen={onAnalyzeToday} />;
+      return <DailyCoachCta onOpen={onAnalyzeToday} copy={copy} />;
     }
     if (key === 'today' && windowKey === '24h') {
-      return <TodayStrip context={todayContext} sleepDetails={sleepDetails} />;
+      return <TodayStrip context={todayContext} sleepDetails={sleepDetails} copy={copy} language={language} />;
     }
     if (key === 'summary') {
-      return <SummaryCards context={context} />;
+      return <SummaryCards context={context} copy={copy} language={language} />;
     }
     if (key === 'charts') {
       return windowKey === '30d' ? (
@@ -807,32 +848,32 @@ function DashboardScreen({
           <Segmented
             value={chartMetric}
             options={[
-              ['steps', 'Activité'],
-              ['sleep', 'Sommeil'],
-              ['workouts', 'Sport']
+              ['steps', copy('dashboard.activity')],
+              ['sleep', copy('dashboard.sleep')],
+              ['workouts', copy('dashboard.sport')]
             ]}
             onChange={setChartMetric}
           />
-          <ChartCard title={chartTitle(chartMetric)} context={context} metric={chartMetric} large />
-          <BiometricTrendCards context={context} large />
+          <ChartCard title={chartTitle(chartMetric, copy)} context={context} metric={chartMetric} large copy={copy} language={language} />
+          <BiometricTrendCards context={context} large copy={copy} language={language} />
         </>
       ) : (
         <>
-          <ChartCard title="Activité quotidienne" context={chartContext} metric="steps" />
-          <ChartCard title="Sommeil" context={chartContext} metric="sleep" />
-          <ChartCard title="Sport" context={chartContext} metric="workouts" />
-          {windowKey !== '24h' ? <BiometricTrendCards context={chartContext} /> : null}
+          <ChartCard title={copy('dashboard.dailyActivity')} context={chartContext} metric="steps" copy={copy} language={language} />
+          <ChartCard title={copy('dashboard.sleep')} context={chartContext} metric="sleep" copy={copy} language={language} />
+          <ChartCard title={copy('dashboard.sport')} context={chartContext} metric="workouts" copy={copy} language={language} />
+          {windowKey !== '24h' ? <BiometricTrendCards context={chartContext} copy={copy} language={language} /> : null}
         </>
       );
     }
     if (key === 'sleepDetails') {
-      return <SleepDetails context={context} windowKey={windowKey} sleepDetails={sleepDetails} />;
+      return <SleepDetails context={context} windowKey={windowKey} sleepDetails={sleepDetails} language={language} />;
     }
     if (key === 'workoutDetails') {
-      return <WorkoutDetails context={context} />;
+      return <WorkoutDetails context={context} language={language} />;
     }
     if (key === 'workoutHistory') {
-      return <WorkoutHistory context={context} />;
+      return <WorkoutHistory context={context} language={language} />;
     }
     return null;
   };
@@ -845,7 +886,7 @@ function DashboardScreen({
       <Segmented
         value={windowKey}
         options={[
-          ['24h', "Aujourd'hui"],
+          ['24h', copy('dashboard.today')],
           ['7d', '7j'],
           ['30d', '30j']
         ]}
@@ -879,15 +920,17 @@ function HealthSyncCard({
   latestRun,
   lastHealthSyncAt,
   lastBackgroundStatus,
-  onSync
+  onSync,
+  language
 }: {
   syncing: boolean;
   latestRun: SyncRun | null;
   lastHealthSyncAt: string | null;
   lastBackgroundStatus: string | null;
   onSync: () => void;
+  language: AppLanguage;
 }) {
-  const summary = healthSyncSummary({ syncing, latestRun, lastHealthSyncAt, lastBackgroundStatus });
+  const summary = healthSyncSummary({ syncing, latestRun, lastHealthSyncAt, lastBackgroundStatus, language });
   return (
     <View style={[styles.syncCard, summary.freshnessTone ? syncCardToneStyle(summary.freshnessTone) : null]}>
       <View style={styles.cardHeaderRow}>
@@ -974,16 +1017,24 @@ function MorningCard({ title, message, status }: { title: string; message: strin
   );
 }
 
-function ScorePanel({ scores, dailyInsight }: { scores: NonNullable<ReturnType<typeof lifeBalanceForToday>>['scores']; dailyInsight?: ReturnType<typeof morningInsightForToday> }) {
+function ScorePanel({
+  scores,
+  dailyInsight,
+  copy
+}: {
+  scores: NonNullable<ReturnType<typeof lifeBalanceForToday>>['scores'];
+  dailyInsight?: ReturnType<typeof morningInsightForToday>;
+  copy: (key: TranslationKey) => string;
+}) {
   if (scores.length === 0) {
     return null;
   }
   return (
     <View style={styles.card}>
       <View style={styles.cardHeaderRow}>
-        <Text style={styles.cardTitle}>Scores équilibre de vie</Text>
+        <Text style={styles.cardTitle}>{copy('dashboard.lifeBalanceScores')}</Text>
         <Pressable
-          accessibilityLabel="Information sur les scores"
+          accessibilityLabel={copy('dashboard.scoreInfo')}
           style={styles.scorePanelInfoButton}
           onPress={() => {
             const info = scorePanelInfoText(scores, dailyInsight);
@@ -997,13 +1048,26 @@ function ScorePanel({ scores, dailyInsight }: { scores: NonNullable<ReturnType<t
         {scores.map((score) => (
           <View key={score.slug} style={styles.scoreItem}>
             <ScoreRing value={score.value} color={scoreColor(score.tone)} unavailable={scoreUnavailable(score)} />
-            <Text style={styles.scoreLabel}>{score.label}</Text>
-            {scoreUnavailable(score) ? <Text style={styles.scoreMeta}>Absence de données</Text> : score.confidence === 'low' ? <Text style={styles.scoreMeta}>Fiabilité faible</Text> : null}
+            <Text style={styles.scoreLabel}>{translatedScoreLabel(score, copy)}</Text>
+            {scoreUnavailable(score) ? <Text style={styles.scoreMeta}>{copy('dashboard.noData')}</Text> : score.confidence === 'low' ? <Text style={styles.scoreMeta}>{copy('dashboard.lowReliability')}</Text> : null}
           </View>
         ))}
       </View>
     </View>
   );
+}
+
+function translatedScoreLabel(score: LifeBalanceScore, copy: (key: TranslationKey) => string): string {
+  if (score.slug === 'sleep') {
+    return copy('dashboard.sleepScore');
+  }
+  if (score.slug === 'recovery') {
+    return copy('dashboard.recoveryScore');
+  }
+  if (score.slug === 'movement') {
+    return copy('dashboard.movementScore');
+  }
+  return score.label;
 }
 
 function scoreUnavailable(score: LifeBalanceScore): boolean {
@@ -1041,10 +1105,10 @@ function ScoreRing({ value, color, unavailable }: { value: number; color: string
   );
 }
 
-function DailyCoachCta({ onOpen }: { onOpen: () => void }) {
+function DailyCoachCta({ onOpen, copy }: { onOpen: () => void; copy: (key: TranslationKey) => string }) {
   return (
     <Pressable style={styles.dailyCoachButton} onPress={onOpen}>
-      <Text style={styles.dailyCoachText}>Faire étudier mes données du jour</Text>
+      <Text style={styles.dailyCoachText}>{copy('dashboard.askCoachToday')}</Text>
       <View style={styles.dailyCoachIcon}>
         <Text style={styles.dailyCoachIconText}>✦</Text>
       </View>
@@ -1052,25 +1116,35 @@ function DailyCoachCta({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-function TodayStrip({ context, sleepDetails }: { context: OverviewContext; sleepDetails: ReturnType<typeof sleepDetailsForToday> }) {
+function TodayStrip({
+  context,
+  sleepDetails,
+  copy,
+  language
+}: {
+  context: OverviewContext;
+  sleepDetails: ReturnType<typeof sleepDetailsForToday>;
+  copy: (key: TranslationKey) => string;
+  language: AppLanguage;
+}) {
   const hasSleep = sleepDetails.durationMinutes > 0;
-  const workout = todayWorkoutPresentation(context);
-  const cardio = todayCardioInsight(context);
+  const workout = todayWorkoutPresentation(context, language);
+  const cardio = todayCardioInsight(context, language);
   return (
     <View style={styles.todayGrid}>
       <MetricTile
-        label="Dernière nuit"
+        label={copy('dashboard.lastNight')}
         value={hasSleep ? formatDuration(sleepDetails.durationMinutes) : '--'}
-        detail={hasSleep && sleepDetails.startTime && sleepDetails.endTime ? `${formatParisDateTime(sleepDetails.startTime)} -> ${formatParisTime(sleepDetails.endTime)} · ${sleepDetails.awakenings} réveil(s)` : 'Absence de données sommeil'}
+        detail={hasSleep && sleepDetails.startTime && sleepDetails.endTime ? `${formatParisDateTime(sleepDetails.startTime)} -> ${formatParisTime(sleepDetails.endTime)} · ${sleepDetails.awakenings} ${language === 'en' ? 'wake-up(s)' : 'réveil(s)'}` : copy('dashboard.sleepMissing')}
         tone={hasSleep ? sleepTone(sleepDetails.durationMinutes) : undefined}
       />
       <MetricTile
-        label="Pas depuis le réveil"
-        value={context.activity.steps.toLocaleString('fr-FR')}
-        detail={context.activity.source ? `source ${context.activity.source}` : 'source auto'}
+        label={copy('dashboard.stepsSinceWake')}
+        value={context.activity.steps.toLocaleString(language === 'en' ? 'en-US' : 'fr-FR')}
+        detail={context.activity.source ? `${language === 'en' ? 'source' : 'source'} ${context.activity.source}` : copy('dashboard.autoSource')}
       />
       <MetricTile
-        label="Sport aujourd'hui"
+        label={copy('dashboard.sportToday')}
         value={workout.value}
         detail={workout.detail}
       />
@@ -1078,7 +1152,7 @@ function TodayStrip({ context, sleepDetails }: { context: OverviewContext; sleep
         <MetricTile
           label={workout.calorie.label}
           value={workout.calorie.value}
-          detail={context.window === '24h' ? "d'après les données reçues" : 'moyenne de la fenêtre'}
+          detail={context.window === '24h' ? copy('dashboard.receivedDataBased') : copy('dashboard.windowAverage')}
           tone="success"
         />
       ) : null}
@@ -1094,21 +1168,29 @@ function TodayStrip({ context, sleepDetails }: { context: OverviewContext; sleep
   );
 }
 
-function SummaryCards({ context }: { context: OverviewContext }) {
+function SummaryCards({
+  context,
+  copy,
+  language
+}: {
+  context: OverviewContext;
+  copy: (key: TranslationKey) => string;
+  language: AppLanguage;
+}) {
   const isToday = context.window === '24h';
   const activityValue = isToday ? context.activity.steps : context.activity.average_daily_steps ?? Math.round(context.activity.steps / Math.max(1, context.series.length));
   const sleepMinutes = context.sleep.average_duration_minutes ?? context.sleep.total_duration_minutes ?? 0;
   return (
     <View style={styles.summaryGrid}>
-      <MetricTile label="Sommeil" value={sleepMinutes > 0 ? formatDuration(sleepMinutes) : '--'} detail={sleepMinutes > 0 ? isToday ? 'dernière nuit mesurée' : 'durée moyenne' : 'absence de données'} />
-      <MetricTile label="Sport" value={formatDuration(context.workouts.duration_minutes)} detail={`${context.workouts.sessions} session(s)`} />
-      <MetricTile label="Activité" value={activityValue.toLocaleString('fr-FR')} detail={isToday ? 'pas' : 'pas / jour'} />
+      <MetricTile label={copy('dashboard.sleep')} value={sleepMinutes > 0 ? formatDuration(sleepMinutes) : '--'} detail={sleepMinutes > 0 ? isToday ? copy('dashboard.sleepMeasuredNight') : copy('dashboard.averageDuration') : copy('dashboard.missingData')} />
+      <MetricTile label={copy('dashboard.sport')} value={formatDuration(context.workouts.duration_minutes)} detail={`${context.workouts.sessions} ${language === 'en' ? 'session(s)' : 'séance(s)'}`} />
+      <MetricTile label={copy('dashboard.activity')} value={activityValue.toLocaleString(language === 'en' ? 'en-US' : 'fr-FR')} detail={isToday ? copy('dashboard.steps') : copy('dashboard.stepsPerDay')} />
     </View>
   );
 }
 
-function NutritionDetails({ context, onAskCoach }: { context: OverviewContext; onAskCoach: () => void }) {
-  const insight = nutritionInsight(context);
+function NutritionDetails({ context, onAskCoach, language }: { context: OverviewContext; onAskCoach: () => void; language: AppLanguage }) {
+  const insight = nutritionInsight(context, language);
   return (
     <View style={styles.card}>
       <View style={styles.cardHeaderRow}>
@@ -1127,15 +1209,15 @@ function NutritionDetails({ context, onAskCoach }: { context: OverviewContext; o
           <Text style={styles.metricDetail}>{insight.meals}</Text>
         </View>
         <View style={styles.flex}>
-          <Text style={styles.metricLabel}>Hydratation</Text>
+          <Text style={styles.metricLabel}>{language === 'en' ? 'Hydration' : 'Hydratation'}</Text>
           <Text style={styles.nutritionEnergyValue}>{insight.hydration}</Text>
-          <Text style={styles.metricDetail}>sur la fenêtre</Text>
+          <Text style={styles.metricDetail}>{language === 'en' ? 'over the window' : 'sur la fenêtre'}</Text>
         </View>
       </View>
       <DetailRow label="Macros" value={insight.macros} />
-      <DetailRow label="Moyenne" value={insight.average} />
-      <DetailRow label="Dernier repas" value={insight.latestMeal} />
-      <Text style={styles.muted}>Seuls les repas validés dans Nutrition alimentent ALIS et Coach.</Text>
+      <DetailRow label={language === 'en' ? 'Average' : 'Moyenne'} value={insight.average} />
+      <DetailRow label={language === 'en' ? 'Latest meal' : 'Dernier repas'} value={insight.latestMeal} />
+      <Text style={styles.muted}>{language === 'en' ? 'Only meals validated in Nutrition feed ALIS and Coach.' : 'Seuls les repas validés dans Nutrition alimentent ALIS et Coach.'}</Text>
     </View>
   );
 }
@@ -1150,8 +1232,8 @@ function MetricTile({ label, value, detail, tone }: { label: string; value: stri
   );
 }
 
-function ChartCard({ title, context, metric, large = false }: { title: string; context: OverviewContext; metric: ChartMetric; large?: boolean }) {
-  const data = chartData(context, metric);
+function ChartCard({ title, context, metric, large = false, copy, language }: { title: string; context: OverviewContext; metric: ChartMetric; large?: boolean; copy: (key: TranslationKey) => string; language: AppLanguage }) {
+  const data = chartData(context, metric, language);
   const max = chartMax(context, metric);
   const references = metric === 'steps'
     ? [
@@ -1164,38 +1246,38 @@ function ChartCard({ title, context, metric, large = false }: { title: string; c
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>{title}</Text>
-      <BarChart data={data} max={max} metric={metric} references={references} large={large} />
+      <BarChart data={data} max={max} metric={metric} references={references} large={large} copy={copy} language={language} />
     </View>
   );
 }
 
-function BiometricTrendCards({ context, large = false }: { context: OverviewContext; large?: boolean }) {
+function BiometricTrendCards({ context, large = false, copy, language }: { context: OverviewContext; large?: boolean; copy: (key: TranslationKey) => string; language: AppLanguage }) {
   return (
     <>
-      <BiometricSummaryCard context={context} metric="hrv" large={large} />
-      <BiometricSummaryCard context={context} metric="vo2" large={large} />
+      <BiometricSummaryCard context={context} metric="hrv" large={large} copy={copy} language={language} />
+      <BiometricSummaryCard context={context} metric="vo2" large={large} copy={copy} language={language} />
     </>
   );
 }
 
-function BiometricSummaryCard({ context, metric, large = false }: { context: OverviewContext; metric: BiometricMetric; large?: boolean }) {
-  const summary = biometricSummary(context, metric);
+function BiometricSummaryCard({ context, metric, large = false, copy, language }: { context: OverviewContext; metric: BiometricMetric; large?: boolean; copy: (key: TranslationKey) => string; language: AppLanguage }) {
+  const summary = biometricSummary(context, metric, language);
   return (
     <View style={[styles.card, large && styles.biometricCardLarge]}>
       <View style={styles.cardHeaderRow}>
-        <Text style={styles.cardTitle}>{summary.title}</Text>
-        {summary.sampleCount > 0 ? <Text style={styles.biometricSampleCount}>{summary.sampleCount} j</Text> : null}
+        <Text style={styles.cardTitle}>{chartTitle(metric, copy)}</Text>
+        {summary.sampleCount > 0 ? <Text style={styles.biometricSampleCount}>{summary.sampleCount} {copy('dashboard.daysShort')}</Text> : null}
       </View>
       {summary.sampleCount === 0 ? (
-        <Text style={styles.empty}>{summary.emptyLabel}</Text>
+        <Text style={styles.empty}>{copy('dashboard.noDataPeriod')}</Text>
       ) : (
         <>
           <View style={styles.biometricStatsRow}>
-            <BiometricStat label="Intervalle" value={summary.interval} />
-            <BiometricStat label="Moyenne" value={summary.average} />
-            <BiometricStat label="Médiane" value={summary.median} />
+            <BiometricStat label={copy('dashboard.interval')} value={summary.interval} />
+            <BiometricStat label={copy('dashboard.average')} value={summary.average} />
+            <BiometricStat label={copy('dashboard.median')} value={summary.median} />
           </View>
-          {metric === 'vo2' ? <Text style={styles.metricDetail}>valeurs en ml/kg/min</Text> : null}
+          {metric === 'vo2' ? <Text style={styles.metricDetail}>{copy('dashboard.vo2Unit')}</Text> : null}
         </>
       )}
     </View>
@@ -1211,28 +1293,28 @@ function BiometricStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function chartTitle(metric: ChartMetric) {
+function chartTitle(metric: ChartMetric, copy: (key: TranslationKey) => string) {
   if (metric === 'steps') {
-    return 'Activité quotidienne';
+    return copy('dashboard.dailyActivity');
   }
   if (metric === 'sleep') {
-    return 'Sommeil';
+    return copy('dashboard.sleep');
   }
   if (metric === 'hrv') {
-    return 'Variabilité cardiaque';
+    return copy('dashboard.hrv');
   }
   if (metric === 'vo2') {
     return 'VO2 max';
   }
-  return 'Sport';
+  return copy('dashboard.sport');
 }
 
-function chartData(context: OverviewContext, metric: ChartMetric) {
+function chartData(context: OverviewContext, metric: ChartMetric, language: AppLanguage) {
   if (metric === 'steps') {
     return context.series.map((day) => ({
       date: day.date,
       value: day.steps,
-      label: formatDailyValue(day.steps, 'pas'),
+      label: formatDailyValue(day.steps, language === 'en' ? 'steps' : 'pas'),
       recovered: Boolean(day.steps_recovered || day.steps_estimated)
     }));
   }
@@ -1240,7 +1322,7 @@ function chartData(context: OverviewContext, metric: ChartMetric) {
     return context.series.map((day) => ({ date: day.date, value: day.sleep_minutes, label: formatDailyValue(day.sleep_minutes, 'sleep') }));
   }
   if (metric === 'hrv' || metric === 'vo2') {
-    return biometricChartData(context, metric);
+    return biometricChartData(context, metric, language);
   }
   return context.series.map((day) => ({ date: day.date, value: day.workout_minutes, label: formatDailyValue(day.workout_minutes, 'min') }));
 }
@@ -1266,13 +1348,17 @@ function BarChart({
   max,
   metric,
   references,
-  large
+  large,
+  copy,
+  language
 }: {
   data: Array<{ date: string; value: number; label: string; recovered?: boolean }>;
   max: number;
   metric: ChartMetric;
   references: Array<{ value: number; color: string; label: string }>;
   large: boolean;
+  copy: (key: TranslationKey) => string;
+  language: AppLanguage;
 }) {
   const width = 320;
   const height = large ? 220 : 160;
@@ -1291,10 +1377,10 @@ function BarChart({
           ? '#0891b2'
           : '#15803d';
   if (data.length === 0) {
-    return <Text style={styles.empty}>Aucune donnée.</Text>;
+    return <Text style={styles.empty}>{copy('dashboard.noData')}</Text>;
   }
   if ((metric === 'hrv' || metric === 'vo2') && !data.some((item) => item.value > 0)) {
-    return <Text style={styles.empty}>Aucune donnée sur cette période.</Text>;
+    return <Text style={styles.empty}>{copy('dashboard.noDataPeriod')}</Text>;
   }
   return (
     <View style={styles.chartWrap}>
@@ -1328,38 +1414,38 @@ function BarChart({
       </Svg>
       <Text style={styles.chartHint}>{data[data.length - 1]?.label ?? ''}</Text>
       {data.some((item) => item.recovered) && metric === 'steps' ? (
-        <Text style={styles.chartQualityHint}>point vert : donnée corrigée</Text>
+        <Text style={styles.chartQualityHint}>{language === 'en' ? 'green point: corrected data' : 'point vert : donnée corrigée'}</Text>
       ) : null}
     </View>
   );
 }
 
-function SleepDetails({ context, windowKey, sleepDetails }: { context: OverviewContext; windowKey: WindowKey; sleepDetails: ReturnType<typeof sleepDetailsForToday> }) {
+function SleepDetails({ context, windowKey, sleepDetails, language }: { context: OverviewContext; windowKey: WindowKey; sleepDetails: ReturnType<typeof sleepDetailsForToday>; language: AppLanguage }) {
   const duration = windowKey === '24h' ? sleepDetails.durationMinutes : context.sleep.average_duration_minutes ?? 0;
   const bed = windowKey === '24h' ? sleepDetails.startTime ? formatParisTime(sleepDetails.startTime) : '-' : context.sleep.average_bed_time ?? '-';
   const wake = windowKey === '24h' ? sleepDetails.endTime ? formatParisTime(sleepDetails.endTime) : '-' : context.sleep.average_wake_time ?? '-';
   const awakenings = windowKey === '24h' ? sleepDetails.awakenings : context.sleep.awakenings_count ?? 0;
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>Détails sommeil</Text>
-      <DetailRow label={windowKey === '24h' ? 'Durée' : 'Durée moyenne'} value={formatDuration(duration)} />
-      <DetailRow label={windowKey === '24h' ? 'Coucher' : 'Coucher moyen'} value={bed} />
-      <DetailRow label={windowKey === '24h' ? 'Réveil' : 'Réveil moyen'} value={wake} />
-      <DetailRow label="Réveils nocturnes" value={`${awakenings}`} />
+      <Text style={styles.cardTitle}>{language === 'en' ? 'Sleep details' : 'Détails sommeil'}</Text>
+      <DetailRow label={windowKey === '24h' ? language === 'en' ? 'Duration' : 'Durée' : language === 'en' ? 'Average duration' : 'Durée moyenne'} value={formatDuration(duration)} />
+      <DetailRow label={windowKey === '24h' ? language === 'en' ? 'Bedtime' : 'Coucher' : language === 'en' ? 'Average bedtime' : 'Coucher moyen'} value={bed} />
+      <DetailRow label={windowKey === '24h' ? language === 'en' ? 'Wake time' : 'Réveil' : language === 'en' ? 'Average wake time' : 'Réveil moyen'} value={wake} />
+      <DetailRow label={language === 'en' ? 'Night awakenings' : 'Réveils nocturnes'} value={`${awakenings}`} />
     </View>
   );
 }
 
-function WorkoutDetails({ context }: { context: OverviewContext }) {
-  const calorieInsight = workoutCalorieInsight(context);
+function WorkoutDetails({ context, language }: { context: OverviewContext; language: AppLanguage }) {
+  const calorieInsight = workoutCalorieInsight(context, language);
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>Détails sport</Text>
+      <Text style={styles.cardTitle}>{language === 'en' ? 'Sport details' : 'Détails sport'}</Text>
       <DetailRow label="Sessions" value={`${context.workouts.sessions}`} />
-      <DetailRow label="Temps total" value={formatDuration(context.workouts.duration_minutes)} />
+      <DetailRow label={language === 'en' ? 'Total time' : 'Temps total'} value={formatDuration(context.workouts.duration_minutes)} />
       <DetailRow label="Running" value={`${Math.round((context.workouts.running_distance_meters ?? 0) / 100) / 10} km`} />
       {calorieInsight ? <DetailRow label={calorieInsight.label} value={calorieInsight.value} /> : null}
-      <DetailRow label="Charge" value={`${context.training_load?.label ?? '-'} · ${context.training_load?.score ?? 0}/100`} />
+      <DetailRow label={language === 'en' ? 'Load' : 'Charge'} value={`${context.training_load?.label ?? '-'} · ${context.training_load?.score ?? 0}/100`} />
       <Text style={styles.bodyText}>{context.training_load?.recommendation ?? ''}</Text>
     </View>
   );
@@ -1374,30 +1460,30 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function WorkoutHistory({ context }: { context: OverviewContext }) {
+function WorkoutHistory({ context, language }: { context: OverviewContext; language: AppLanguage }) {
   const history = context.workouts.history ?? [];
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>Historique sport</Text>
-      {context.window === '30d' ? <Text style={styles.muted}>Faire défiler pour voir tout l'historique.</Text> : null}
-      {history.length === 0 ? <Text style={styles.empty}>Aucun entraînement sur cette fenêtre.</Text> : null}
+      <Text style={styles.cardTitle}>{language === 'en' ? 'Sport history' : 'Historique sport'}</Text>
+      {context.window === '30d' ? <Text style={styles.muted}>{language === 'en' ? 'Scroll to see the full history.' : "Faire défiler pour voir tout l'historique."}</Text> : null}
+      {history.length === 0 ? <Text style={styles.empty}>{language === 'en' ? 'No workout in this window.' : 'Aucun entraînement sur cette fenêtre.'}</Text> : null}
       {history.slice(0, context.window === '30d' ? 30 : 12).map((item) => (
-        <WorkoutRow key={`${item.start_time}-${item.activity_type}`} item={item} />
+        <WorkoutRow key={`${item.start_time}-${item.activity_type}`} item={item} language={language} />
       ))}
     </View>
   );
 }
 
-function WorkoutRow({ item }: { item: WorkoutHistoryItem }) {
+function WorkoutRow({ item, language }: { item: WorkoutHistoryItem; language: AppLanguage }) {
   return (
     <View style={styles.workoutRow}>
       <View style={styles.workoutIcon}>
         <Text style={styles.workoutIconText}>{activityIcon(item.activity_type)}</Text>
       </View>
       <View style={styles.flex}>
-        <Text style={styles.workoutDate}>{formatFrenchLongDate(item.date)}</Text>
+        <Text style={styles.workoutDate}>{language === 'en' ? formatEnglishLongDate(item.date) : formatFrenchLongDate(item.date)}</Text>
         <Text style={styles.workoutText}>
-          {formatActivityLabel(item.activity_type)} · {formatDuration(item.duration_minutes)}
+          {formatActivityLabel(item.activity_type, language)} · {formatDuration(item.duration_minutes)}
           {item.activity_type === 'running' && item.distance_meters ? ` · ${Math.round(item.distance_meters / 100) / 10} km` : ''}
         </Text>
       </View>
@@ -1411,7 +1497,8 @@ function CoachScreen({
   setInput,
   isStreaming,
   coachPhase,
-  send
+  send,
+  copy
 }: {
   messages: CoachChatMessage[];
   input: string;
@@ -1419,13 +1506,14 @@ function CoachScreen({
   isStreaming: boolean;
   coachPhase: CoachPhase;
   send: (message?: string) => Promise<void>;
+  copy: (key: TranslationKey) => string;
 }) {
   const scrollRef = useRef<ScrollView | null>(null);
   const prompts = [
-    'Comment optimiser ma récupération ?',
-    'Pourquoi je me sens fatigué ?',
-    'Comment mieux dormir ?',
-    "Puis-je pousser aujourd'hui ?"
+    copy('coach.promptRecovery'),
+    copy('coach.promptFatigue'),
+    copy('coach.promptSleep'),
+    copy('coach.promptPush')
   ];
   const visibleMessages = messages.filter((message) => !message.hidden);
   return (
@@ -1438,8 +1526,8 @@ function CoachScreen({
       >
         {visibleMessages.length === 0 ? (
           <View style={styles.coachWelcomePanel}>
-            <Text style={styles.coachWelcomeTitle}>Coach IA</Text>
-            <Text style={styles.coachWelcomeText}>Je peux regarder tes données du jour et te répondre simplement, comme dans une conversation.</Text>
+            <Text style={styles.coachWelcomeTitle}>{copy('coach.welcomeTitle')}</Text>
+            <Text style={styles.coachWelcomeText}>{copy('coach.welcomeText')}</Text>
           </View>
         ) : null}
         <View style={styles.promptGrid}>
@@ -1449,7 +1537,7 @@ function CoachScreen({
             </Pressable>
           ))}
         </View>
-        {visibleMessages.length === 0 ? <Text style={styles.muted}>Les réponses restent indicatives et ne remplacent pas un avis médical.</Text> : null}
+        {visibleMessages.length === 0 ? <Text style={styles.muted}>{copy('coach.disclaimer')}</Text> : null}
         {visibleMessages.map((message, index) => (
           <ChatBubble
             key={`${message.role}-${index}`}
@@ -1459,12 +1547,13 @@ function CoachScreen({
               isStreaming,
               content: message.content
             })}
-            loadingLabel={message.loadingLabel ?? (coachPhase === 'waking' ? 'Réveil du modèle IA en cours' : 'Génération de la réponse')}
+            loadingLabel={message.loadingLabel ?? (coachPhase === 'waking' ? copy('coach.waking') : copy('coach.generating'))}
+            copy={copy}
           />
         ))}
       </ScrollView>
       <View style={styles.chatInputBar}>
-        <TextInput value={input} onChangeText={setInput} placeholder="Écris au coach..." style={styles.chatInput} multiline />
+        <TextInput value={input} onChangeText={setInput} placeholder={copy('coach.inputPlaceholder')} style={styles.chatInput} multiline />
         <Pressable disabled={isStreaming || !input.trim()} style={[styles.sendButton, (!input.trim() || isStreaming) && styles.disabledButton]} onPress={() => send()}>
           {isStreaming ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.sendButtonText}>➜</Text>}
         </Pressable>
@@ -1473,11 +1562,11 @@ function CoachScreen({
   );
 }
 
-function ChatBubble({ message, loading, loadingLabel }: { message: CoachChatMessage; loading: boolean; loadingLabel: string }) {
+function ChatBubble({ message, loading, loadingLabel, copy }: { message: CoachChatMessage; loading: boolean; loadingLabel: string; copy: (key: TranslationKey) => string }) {
   const isUser = message.role === 'user';
   return (
     <View style={[styles.chatBubble, isUser ? styles.chatBubbleUser : styles.chatBubbleCoach, loading && styles.chatBubbleLoading]}>
-      <Text style={[styles.chatRole, isUser && styles.chatRoleUser]}>{isUser ? 'Vous' : 'Coach'}</Text>
+      <Text style={[styles.chatRole, isUser && styles.chatRoleUser]}>{isUser ? copy('coach.you') : copy('coach.coach')}</Text>
       {loading ? (
         <View style={styles.typingRow}>
           <Text style={[styles.bodyText, styles.typingLabel]} numberOfLines={1}>{coachLoadingLabel(loadingLabel)}</Text>
@@ -1537,7 +1626,11 @@ function ConfigurationScreen({
   loadNutritionDiagnostics,
   saveConfiguration,
   clearToken,
-  testApi
+  testApi,
+  language,
+  languagePreference,
+  setLanguagePreference,
+  copy
 }: {
   settings: Settings;
   apiUrl: string;
@@ -1564,20 +1657,26 @@ function ConfigurationScreen({
   saveConfiguration: () => Promise<void>;
   clearToken: () => Promise<void>;
   testApi: () => Promise<void>;
+  language: AppLanguage;
+  languagePreference: LanguagePreference;
+  setLanguagePreference: (language: LanguagePreference) => Promise<void>;
+  copy: (key: TranslationKey) => string;
 }) {
-  const sync = formatSyncObservability(dashboard?.sync_summary);
+  const sync = formatSyncObservability(dashboard?.sync_summary, language);
   const enabledGoals = activeCoachGoals(draftCoachGoals);
   const disabledGoals = inactiveCoachGoals(draftCoachGoals);
-  const profileButton = profileSaveButtonPresentation(profileSaved);
+  const sourceDiagnostics = formatSourceDiagnostics(dashboard?.source_diagnostics, language);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const profileButtonLabel = profileSaved ? copy('settings.profileSaved') : copy('settings.saveProfile');
+  const latestSyncError = sync.latestError;
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Notifications</Text>
+        <Text style={styles.cardTitle}>{copy('settings.notificationsTitle')}</Text>
         <View style={styles.settingRow}>
           <View style={styles.flex}>
-            <Text style={styles.metricLabel}>Rappel du matin</Text>
-            <Text style={styles.metricDetail}>Tous les jours à 10h30, ouvre directement l'onglet Aujourd'hui.</Text>
+            <Text style={styles.metricLabel}>{copy('settings.morningReminder')}</Text>
+            <Text style={styles.metricDetail}>{copy('settings.morningReminderDescription')}</Text>
           </View>
           <Switch
             value={notificationsEnabled}
@@ -1590,22 +1689,44 @@ function ConfigurationScreen({
         </View>
       </View>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Profil pour le coach</Text>
-        <Text style={styles.metricDetail}>Ces infos aident ALIS à contextualiser ses conseils, sans modifier l'identité interne du coach.</Text>
-        <Text style={styles.inputLabel}>Prénom</Text>
+        <Text style={styles.cardTitle}>{copy('settings.languageTitle')}</Text>
+        <Text style={styles.metricDetail}>{copy('settings.languageDescription')}</Text>
+        <View style={styles.choiceRow}>
+          {[
+            ['system', copy('settings.languageSystem')],
+            ['fr', copy('settings.languageFrench')],
+            ['en', copy('settings.languageEnglish')]
+          ].map(([value, label]) => (
+            <Pressable
+              key={value}
+              style={[styles.choiceButton, languagePreference === value && styles.choiceButtonActive]}
+              onPress={() => {
+                void setLanguagePreference(value as LanguagePreference);
+              }}
+            >
+              <Text style={[styles.choiceButtonText, languagePreference === value && styles.choiceButtonTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.metricDetail}>{language === 'fr' ? copy('settings.activeLanguageFrench') : copy('settings.activeLanguageEnglish')}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>{copy('settings.profileTitle')}</Text>
+        <Text style={styles.metricDetail}>{copy('settings.profileDescription')}</Text>
+        <Text style={styles.inputLabel}>{copy('settings.firstName')}</Text>
         <TextInput
           value={draftUserProfile.firstName}
           onChangeText={(value) => setDraftUserProfileField('firstName', value)}
           autoCapitalize="words"
-          placeholder="Optionnel"
+          placeholder={copy('settings.optional')}
           style={styles.input}
         />
-        <Text style={styles.inputLabel}>Sexe</Text>
+        <Text style={styles.inputLabel}>{copy('settings.sex')}</Text>
         <View style={styles.choiceRow}>
           {[
-            ['male', 'Homme'],
-            ['female', 'Femme'],
-            ['unspecified', 'Non précisé']
+            ['male', copy('settings.male')],
+            ['female', copy('settings.female')],
+            ['unspecified', copy('settings.unspecified')]
           ].map(([value, label]) => (
             <Pressable
               key={value}
@@ -1618,17 +1739,17 @@ function ConfigurationScreen({
         </View>
         <View style={styles.profileGrid}>
           <View style={styles.profileField}>
-            <Text style={styles.inputLabel}>Âge</Text>
+            <Text style={styles.inputLabel}>{copy('settings.age')}</Text>
             <TextInput
               value={draftUserProfile.age}
               onChangeText={(value) => setDraftUserProfileField('age', value)}
               keyboardType="number-pad"
-              placeholder="ans"
+              placeholder={copy('settings.years')}
               style={styles.input}
             />
           </View>
           <View style={styles.profileField}>
-            <Text style={styles.inputLabel}>Poids</Text>
+            <Text style={styles.inputLabel}>{copy('settings.weight')}</Text>
             <TextInput
               value={draftUserProfile.weightKg}
               onChangeText={(value) => setDraftUserProfileField('weightKg', value)}
@@ -1638,7 +1759,7 @@ function ConfigurationScreen({
             />
           </View>
           <View style={styles.profileField}>
-            <Text style={styles.inputLabel}>Taille</Text>
+            <Text style={styles.inputLabel}>{copy('settings.height')}</Text>
             <TextInput
               value={draftUserProfile.heightCm}
               onChangeText={(value) => setDraftUserProfileField('heightCm', value)}
@@ -1648,18 +1769,18 @@ function ConfigurationScreen({
             />
           </View>
         </View>
-        <Pressable style={[styles.primaryButton, profileButton.saved && styles.savedProfileButton]} onPress={saveCoachProfile}>
-          <Text style={styles.primaryButtonText}>{profileButton.label}</Text>
+        <Pressable style={[styles.primaryButton, profileSaved && styles.savedProfileButton]} onPress={saveCoachProfile}>
+          <Text style={styles.primaryButtonText}>{profileButtonLabel}</Text>
         </Pressable>
       </View>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Identité du coach IA</Text>
-        <Text style={styles.metricDetail}>ALIS garde un ton clair, prudent, humain et encourageant. Cette identité est gérée par l'application.</Text>
-        <DetailRow label="Identité" value={agentPrompt?.is_default === false ? 'ALIS personnalisée' : 'ALIS par défaut'} />
+        <Text style={styles.cardTitle}>{copy('settings.coachIdentityTitle')}</Text>
+        <Text style={styles.metricDetail}>{copy('settings.coachIdentityDescription')}</Text>
+        <DetailRow label={copy('settings.identity')} value={agentPrompt?.is_default === false ? copy('settings.customAlis') : copy('settings.defaultAlis')} />
       </View>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Priorités du coach</Text>
-        <Text style={styles.metricDetail}>{coachGoals?.is_default ? 'Priorités par défaut actives.' : 'Priorités personnalisées actives.'} Le coach les lit de haut en bas.</Text>
+        <Text style={styles.cardTitle}>{copy('settings.coachPrioritiesTitle')}</Text>
+        <Text style={styles.metricDetail}>{coachGoals?.is_default ? copy('settings.defaultPrioritiesActive') : copy('settings.customPrioritiesActive')} {copy('settings.prioritiesOrderHint')}</Text>
         <View style={styles.goalList}>
           {enabledGoals.map((goal, index) => (
             <View key={goal.slug} style={styles.goalRow}>
@@ -1683,7 +1804,7 @@ function ConfigurationScreen({
                   <Text style={styles.goalIconText}>↓</Text>
                 </Pressable>
                 <Pressable style={styles.removeGoalButton} onPress={() => setCoachGoalEnabled(goal.slug, false)}>
-                  <Text style={styles.removeGoalText}>Retirer</Text>
+                  <Text style={styles.removeGoalText}>{copy('settings.remove')}</Text>
                 </Pressable>
               </View>
             </View>
@@ -1691,7 +1812,7 @@ function ConfigurationScreen({
         </View>
         {disabledGoals.length > 0 ? (
           <View style={styles.hiddenGoals}>
-            <Text style={styles.inputLabel}>Masquées</Text>
+            <Text style={styles.inputLabel}>{copy('settings.hiddenGoals')}</Text>
             <View style={styles.hiddenGoalGrid}>
               {disabledGoals.map((goal) => (
                 <Pressable key={goal.slug} style={styles.hiddenGoalButton} onPress={() => setCoachGoalEnabled(goal.slug, true)}>
@@ -1702,62 +1823,84 @@ function ConfigurationScreen({
           </View>
         ) : null}
         <Pressable disabled={draftCoachGoals.length === 0} style={[styles.primaryButton, draftCoachGoals.length === 0 && styles.disabledButton]} onPress={updateCoachGoals}>
-          <Text style={styles.primaryButtonText}>Enregistrer les priorités</Text>
+          <Text style={styles.primaryButtonText}>{copy('settings.savePriorities')}</Text>
         </Pressable>
       </View>
       <View style={styles.card}>
         <Pressable style={styles.advancedHeader} onPress={() => setAdvancedOpen((isOpen) => !isOpen)}>
           <View style={styles.flex}>
-            <Text style={styles.cardTitle}>Avancé</Text>
-            <Text style={styles.metricDetail}>Connexion, synchronisation et diagnostics.</Text>
+            <Text style={styles.cardTitle}>{copy('settings.advancedTitle')}</Text>
+            <Text style={styles.metricDetail}>{copy('settings.advancedDescription')}</Text>
           </View>
           <Text style={styles.advancedChevron}>{advancedOpen ? '-' : '+'}</Text>
         </Pressable>
         {advancedOpen ? (
           <View style={styles.advancedContent}>
             <View style={styles.advancedSection}>
-              <Text style={styles.advancedSectionTitle}>Connexion API</Text>
-              <Text style={styles.inputLabel}>URL API</Text>
+              <Text style={styles.advancedSectionTitle}>{copy('settings.apiConnection')}</Text>
+              <Text style={styles.inputLabel}>{copy('settings.apiUrl')}</Text>
               <TextInput value={apiUrl} onChangeText={setApiUrl} autoCapitalize="none" autoCorrect={false} style={styles.input} />
-              <Text style={styles.inputLabel}>Pairing code</Text>
+              <Text style={styles.inputLabel}>{copy('settings.pairingCode')}</Text>
               <TextInput value={pairingCode} onChangeText={setPairingCode} autoCapitalize="none" autoCorrect={false} style={styles.input} />
               <View style={styles.configButtons}>
                 <Pressable style={styles.primaryButton} onPress={saveConfiguration}>
-                  <Text style={styles.primaryButtonText}>Enregistrer</Text>
+                  <Text style={styles.primaryButtonText}>{copy('common.save')}</Text>
                 </Pressable>
                 <Pressable style={styles.secondaryButton} onPress={testApi}>
-                  <Text style={styles.secondaryButtonText}>Tester API</Text>
+                  <Text style={styles.secondaryButtonText}>{copy('settings.testApi')}</Text>
                 </Pressable>
               </View>
               <Pressable style={styles.dangerButton} onPress={clearToken}>
-                <Text style={styles.dangerButtonText}>Effacer le token</Text>
+                <Text style={styles.dangerButtonText}>{copy('settings.clearToken')}</Text>
               </Pressable>
             </View>
 
             <View style={styles.advancedSection}>
-              <Text style={styles.advancedSectionTitle}>État</Text>
-              <DetailRow label="Token" value={settings.deviceToken ? 'Présent' : 'Absent'} />
-              <DetailRow label="Source" value={dashboard?.source_config.source_badge ?? '-'} />
-              <DetailRow label="Dernière synchronisation" value={dashboard?.latest_sync_run?.created_at ? formatParisDateTime(dashboard.latest_sync_run.created_at) : '-'} />
-              <DetailRow label="Dernier calcul" value={dashboard?.computed_at ? formatParisDateTime(dashboard.computed_at) : '-'} />
+              <Text style={styles.advancedSectionTitle}>{copy('settings.state')}</Text>
+              <DetailRow label={copy('settings.token')} value={settings.deviceToken ? copy('common.present') : copy('common.absent')} />
+              <DetailRow label={copy('settings.source')} value={dashboard?.source_config.source_badge ?? '-'} />
+              <DetailRow label={copy('settings.snapshot')} value={dashboard?.snapshot_status === 'fresh' ? copy('settings.snapshotFresh') : dashboard?.snapshot_status === 'stale' ? copy('settings.snapshotStale') : dashboard?.snapshot_status ?? '-'} />
+              <DetailRow label={copy('settings.lastSync')} value={dashboard?.latest_sync_run?.created_at ? formatParisDateTime(dashboard.latest_sync_run.created_at) : '-'} />
+              <DetailRow label={copy('settings.lastCalculation')} value={dashboard?.computed_at ? formatParisDateTime(dashboard.computed_at) : '-'} />
             </View>
 
             <View style={styles.advancedSection}>
-              <Text style={styles.advancedSectionTitle}>Synchronisation</Text>
-              <DetailRow label="Dernière manuelle" value={sync.lastManual} />
-              <DetailRow label="Dernière arrière-plan" value={sync.lastBackground} />
-              <DetailRow label="Prochain passage estimé" value={sync.nextBackground} />
-              <DetailRow label="Enregistrements reçus" value={sync.records} />
-              <DetailRow label="Runs" value={sync.runs} />
-              <DetailRow label="Réseau" value={sync.network} />
-              <Text style={sync.latestError === 'Aucune erreur récente' ? styles.muted : styles.errorText}>{sync.latestError}</Text>
+              <Text style={styles.advancedSectionTitle}>{copy('settings.sourcesTitle')}</Text>
+              <Text style={styles.metricDetail}>{copy('settings.sourcesDescription')}</Text>
+              {sourceDiagnostics.length > 0 ? (
+                sourceDiagnostics.map((item) => (
+                  <View key={item.title} style={styles.sourceDiagnosticItem}>
+                    <View style={styles.cardHeaderRow}>
+                      <Text style={styles.sourceDiagnosticTitle}>{item.title}</Text>
+                      <Text style={styles.sourceDiagnosticSelected}>{item.selected}</Text>
+                    </View>
+                    <Text style={styles.metricDetail}>{item.latest}</Text>
+                    {item.sources.map((source) => (
+                      <Text key={source} style={styles.bodyText}>{source}</Text>
+                    ))}
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.bodyText}>{copy('settings.sourcesMissing')}</Text>
+              )}
+            </View>
+
+            <View style={styles.advancedSection}>
+              <Text style={styles.advancedSectionTitle}>{copy('settings.syncTitle')}</Text>
+              <DetailRow label={copy('settings.lastManualSync')} value={sync.lastManual} />
+              <DetailRow label={copy('settings.lastBackgroundSync')} value={sync.lastBackground} />
+              <DetailRow label={copy('settings.nextBackgroundSync')} value={sync.nextBackground} />
+              <DetailRow label={copy('settings.recordsReceived')} value={sync.records} />
+              <DetailRow label={copy('settings.runs')} value={sync.runs} />
+              <DetailRow label={copy('settings.network')} value={sync.network} />
+              <Text style={sync.latestError === copy('settings.noRecentError') ? styles.muted : styles.errorText}>{latestSyncError}</Text>
             </View>
 
             <View style={styles.advancedSection}>
               <View style={styles.cardHeaderRow}>
                 <View style={styles.flex}>
-                  <Text style={styles.advancedSectionTitle}>Nutrition</Text>
-                  <Text style={styles.metricDetail}>Sources alimentaires et analyse locale.</Text>
+                  <Text style={styles.advancedSectionTitle}>{copy('settings.nutritionTitle')}</Text>
+                  <Text style={styles.metricDetail}>{copy('settings.foodSources')}</Text>
                 </View>
                 <Pressable
                   style={[styles.secondaryButton, nutritionDiagnosticsLoading && styles.disabledButton]}
@@ -1766,14 +1909,14 @@ function ConfigurationScreen({
                     void loadNutritionDiagnostics();
                   }}
                 >
-                  <Text style={styles.secondaryButtonText}>{nutritionDiagnosticsLoading ? '...' : 'Diagnostic'}</Text>
+                  <Text style={styles.secondaryButtonText}>{nutritionDiagnosticsLoading ? '...' : copy('settings.diagnostic')}</Text>
                 </Pressable>
               </View>
-              <DetailRow label="CIQUAL" value={nutritionDatasetStatus?.ciqual_loaded ? 'Présent' : '-'} />
-              <DetailRow label="Open Food Facts" value={nutritionDatasetStatus?.openfoodfacts_loaded ? 'Présent' : '-'} />
-              <DetailRow label="Références" value={nutritionDatasetStatus?.total_references != null ? `${nutritionDatasetStatus.total_references}` : '-'} />
-              <DetailRow label="Ollama" value={nutritionDiagnostics?.ollama.reachable ? 'OK' : '-'} />
-              <DetailRow label="Jobs" value={nutritionDiagnostics ? `${nutritionDiagnostics.jobs.pending} attente · ${nutritionDiagnostics.jobs.running} cours · ${nutritionDiagnostics.jobs.failed} erreur` : '-'} />
+              <DetailRow label="CIQUAL" value={nutritionDatasetStatus?.ciqual_loaded ? copy('common.present') : '-'} />
+              <DetailRow label="Open Food Facts" value={nutritionDatasetStatus?.openfoodfacts_loaded ? copy('common.present') : '-'} />
+              <DetailRow label={copy('settings.references')} value={nutritionDatasetStatus?.total_references != null ? `${nutritionDatasetStatus.total_references}` : '-'} />
+              <DetailRow label="Ollama" value={nutritionDiagnostics?.ollama.reachable ? copy('common.ok') : '-'} />
+              <DetailRow label={copy('settings.jobs')} value={nutritionDiagnostics ? `${nutritionDiagnostics.jobs.pending} ${copy('settings.jobWaiting')} · ${nutritionDiagnostics.jobs.running} ${copy('common.running')} · ${nutritionDiagnostics.jobs.failed} ${copy('common.error')}` : '-'} />
               {nutritionDiagnostics?.ollama.error_message ? <Text style={styles.errorText}>{nutritionDiagnostics.ollama.error_message}</Text> : null}
             </View>
           </View>
@@ -1792,19 +1935,19 @@ function LoadingState({ label }: { label: string }) {
   );
 }
 
-function ErrorState({ message, apiUrl, onRetry, onConfig }: { message: string; apiUrl: string; onRetry: () => void; onConfig: () => void }) {
+function ErrorState({ message, apiUrl, onRetry, onConfig, language }: { message: string; apiUrl: string; onRetry: () => void; onConfig: () => void; language: AppLanguage }) {
   return (
     <View style={styles.errorState}>
-      <Text style={styles.eyebrow}>Connexion indisponible</Text>
-      <Text style={styles.cardTitle}>Impossible de charger ALIS</Text>
+      <Text style={styles.eyebrow}>{language === 'en' ? 'Connection unavailable' : 'Connexion indisponible'}</Text>
+      <Text style={styles.cardTitle}>{language === 'en' ? 'Unable to load ALIS' : 'Impossible de charger ALIS'}</Text>
       <Text style={styles.bodyText}>{message}</Text>
-      <Text style={styles.muted}>API configuree : {apiUrl}</Text>
+      <Text style={styles.muted}>{language === 'en' ? 'Configured API' : 'API configuree'} : {apiUrl}</Text>
       <View style={styles.configButtons}>
         <Pressable style={styles.primaryButton} onPress={onRetry}>
-          <Text style={styles.primaryButtonText}>Réessayer</Text>
+          <Text style={styles.primaryButtonText}>{language === 'en' ? 'Retry' : 'Réessayer'}</Text>
         </Pressable>
         <Pressable style={styles.secondaryButton} onPress={onConfig}>
-          <Text style={styles.secondaryButtonText}>Configuration</Text>
+          <Text style={styles.secondaryButtonText}>{language === 'en' ? 'Settings' : 'Configuration'}</Text>
         </Pressable>
       </View>
     </View>
@@ -2766,6 +2909,27 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     fontSize: 16,
     fontWeight: '900'
+  },
+  sourceDiagnosticItem: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#f8fafc',
+    padding: 10,
+    gap: 5
+  },
+  sourceDiagnosticTitle: {
+    color: '#0f172a',
+    fontSize: 14,
+    fontWeight: '900',
+    flexShrink: 1
+  },
+  sourceDiagnosticSelected: {
+    color: theme.colors.info,
+    fontSize: 12,
+    fontWeight: '900',
+    flexShrink: 1,
+    textAlign: 'right'
   },
   configButtons: {
     flexDirection: 'row',

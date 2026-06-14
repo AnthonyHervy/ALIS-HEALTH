@@ -37,6 +37,9 @@ TRAINING_ACTIVITY_TYPES = {
     "swimming",
 }
 ESTIMATED_STEP_METERS = 0.85
+STEP_SELECTED_SOURCE_FALLBACK_RATIO = 1.5
+STEP_NORMALIZED_SOURCE_FALLBACK_RATIO = 1.2
+STEP_NORMALIZED_SOURCE_MIN_DELTA = 1_000
 ACTIVITY_TYPE_ALIASES = {
     "run": "running",
     "running": "running",
@@ -148,6 +151,9 @@ class HealthContextService:
         activity["steps"] = int(sum(day["steps"] for day in series))
         activity["active_calories_kcal"] = float(sum(day["active_calories_kcal"] for day in series))
         activity["distance_meters"] = float(sum(day["distance_meters"] for day in series))
+        step_source = next((day.get("steps_source") for day in reversed(series) if day.get("steps_source")), None)
+        if step_source:
+            activity["source"] = step_source
         activity["average_daily_steps"] = int(sum(day["steps"] for day in series) / len(series)) if series else 0
         activity["average_daily_active_calories_kcal"] = (
             float(sum(day["active_calories_kcal"] for day in series) / len(series)) if series else 0.0
@@ -260,7 +266,7 @@ class HealthContextService:
         if snapshot is None:
             return None
         payload = snapshot.payload or {}
-        return payload.get("windows")
+        return payload
 
     async def morning_brief(self, user_id: str) -> dict:
         last_24h = await self.overview(user_id, "24h")
@@ -543,6 +549,7 @@ class HealthContextService:
             value_path=["count"],
             selected_source=selected_source,
             start=start,
+            fallback_to_best_source_ratio=STEP_SELECTED_SOURCE_FALLBACK_RATIO,
         )
         raw_active_calories = selected_raw_daily_sums(
             payloads,
@@ -559,6 +566,9 @@ class HealthContextService:
             start=start,
         )
         if raw_steps or raw_active_calories or raw_distance:
+            activity_source = selected_source
+            if raw_steps:
+                activity_source = max(raw_steps.values(), key=lambda day: day["total"]).get("source") or activity_source
             return {
                 "window": window,
                 "steps": int(sum(day["total"] for day in raw_steps.values())),
@@ -567,7 +577,7 @@ class HealthContextService:
                 "step_records": int(sum(day["records"] for day in raw_steps.values())),
                 "active_calorie_records": int(sum(day["records"] for day in raw_active_calories.values())),
                 "distance_records": int(sum(day["records"] for day in raw_distance.values())),
-                "source": selected_source,
+                "source": activity_source,
             }
         allowed_days = await self._window_days(user_id, window)
         normalized_activity = await self._normalized_daily_activity(user_id, start, set(allowed_days), selected_source)
@@ -669,6 +679,7 @@ class HealthContextService:
             start=start,
             allowed_days=set(allowed_days),
             day_tz=PARIS,
+            fallback_to_best_source_ratio=STEP_SELECTED_SOURCE_FALLBACK_RATIO,
         )
         raw_active_calories = selected_raw_daily_sums(
             payloads,
@@ -703,6 +714,9 @@ class HealthContextService:
                 days[day]["steps"] = int(values["steps"])
                 days[day]["active_calories_kcal"] = float(values["active_calories_kcal"])
                 days[day]["distance_meters"] = float(values["distance_meters"])
+
+        best_normalized_steps = await self._best_normalized_steps_by_source(user_id, start, set(allowed_days))
+        self._recover_best_normalized_steps(days, best_normalized_steps)
 
         sleep_sessions = await self._selected_sleep_sessions(
             user_id,
@@ -923,6 +937,52 @@ class HealthContextService:
                 values[day]["active_calorie_records"] = len(incremental_day.get("calories", {}))
         return values
 
+    async def _best_normalized_steps_by_source(
+        self,
+        user_id: str,
+        start: datetime,
+        allowed_days: set[str],
+    ) -> dict[str, dict]:
+        observation_rows = await self.db.execute(
+            select(
+                HealthObservation.timestamp,
+                HealthObservation.value,
+                HealthObservation.metadata_json,
+            )
+            .where(
+                HealthObservation.user_id == user_id,
+                HealthObservation.timestamp >= start,
+                HealthObservation.type == "steps",
+            )
+        )
+        values_by_source: defaultdict[str, defaultdict[str, dict[tuple, float]]] = defaultdict(
+            lambda: defaultdict(dict)
+        )
+        for timestamp, value, metadata in observation_rows.all():
+            day = local_date(timestamp).isoformat()
+            if day not in allowed_days:
+                continue
+            metadata = metadata or {}
+            origin = data_origin(metadata)
+            if not origin:
+                continue
+            dedupe_key = self._normalized_activity_dedupe_key("steps", day, timestamp, metadata, value)
+            current_value = values_by_source[day][origin].get(dedupe_key, 0.0)
+            values_by_source[day][origin][dedupe_key] = max(current_value, float(value or 0))
+
+        best_by_day: dict[str, dict] = {}
+        for day, source_values in values_by_source.items():
+            best_source, best_records = max(
+                source_values.items(),
+                key=lambda item: sum(item[1].values()),
+            )
+            best_by_day[day] = {
+                "source": best_source,
+                "steps": int(sum(best_records.values())),
+                "step_records": len(best_records),
+            }
+        return best_by_day
+
     async def _incremental_activity_batch_ids(self, user_id: str, start: datetime) -> set[str]:
         result = await self.db.execute(
             select(HealthSyncRun.batch_id).where(
@@ -970,6 +1030,26 @@ class HealthContextService:
                 days[day]["active_calories_kcal"] = float(normalized["active_calories_kcal"])
             if not days[day].get("distance_meters") and normalized.get("distance_meters"):
                 days[day]["distance_meters"] = float(normalized["distance_meters"])
+
+    def _recover_best_normalized_steps(self, days: dict[str, dict], best_normalized_steps: dict[str, dict]) -> None:
+        for day, best in best_normalized_steps.items():
+            if day not in days:
+                continue
+            current_steps = int(days[day].get("steps") or 0)
+            best_steps = int(best.get("steps") or 0)
+            if best_steps <= current_steps:
+                continue
+            if current_steps <= 0 or (
+                best_steps - current_steps >= STEP_NORMALIZED_SOURCE_MIN_DELTA
+                and best_steps >= current_steps * STEP_NORMALIZED_SOURCE_FALLBACK_RATIO
+            ):
+                days[day]["steps"] = best_steps
+                days[day]["step_records"] = max(
+                    int(days[day].get("step_records") or 0),
+                    int(best.get("step_records") or 0),
+                )
+                days[day]["steps_source"] = best.get("source")
+                days[day]["steps_recovered"] = True
 
     async def _raw_payloads(self, user_id: str) -> list[dict]:
         result = await self.db.execute(
@@ -1524,6 +1604,14 @@ class HealthContextService:
         candidates.append(
             await self.db.scalar(
                 select(func.max(HealthHydrationRecord.end_time)).where(HealthHydrationRecord.user_id == user_id)
+            )
+        )
+        candidates.append(
+            await self.db.scalar(
+                select(func.max(HealthSyncRun.data_end)).where(
+                    HealthSyncRun.user_id == user_id,
+                    HealthSyncRun.status == "success",
+                )
             )
         )
         concrete = [candidate for candidate in candidates if candidate is not None]

@@ -1,5 +1,7 @@
 import * as Notifications from 'expo-notifications';
 
+import type { AppLanguage } from '../i18n';
+
 const CHANNEL_ID = 'nutrition-analysis';
 
 Notifications.setNotificationHandler({
@@ -10,9 +12,10 @@ Notifications.setNotificationHandler({
   })
 });
 
-export async function notifyMealReady(title = 'Analyse nutrition prête'): Promise<void> {
+export async function notifyMealReady(title?: string, language: AppLanguage = 'fr'): Promise<void> {
+  const resolvedTitle = title ?? (language === 'en' ? 'Nutrition analysis ready' : 'Analyse nutrition prête');
   await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-    name: 'Analyses nutrition',
+    name: language === 'en' ? 'Nutrition analyses' : 'Analyses nutrition',
     importance: Notifications.AndroidImportance.HIGH
   });
   const permissions = await Notifications.getPermissionsAsync();
@@ -23,8 +26,8 @@ export async function notifyMealReady(title = 'Analyse nutrition prête'): Promi
   }
   await Notifications.scheduleNotificationAsync({
     content: {
-      title,
-      body: 'Ton repas est prêt à être relu et validé.',
+      title: resolvedTitle,
+      body: language === 'en' ? 'Your meal is ready to review and validate.' : 'Ton repas est prêt à être relu et validé.',
       data: { target: 'nutrition' }
     },
     trigger: null

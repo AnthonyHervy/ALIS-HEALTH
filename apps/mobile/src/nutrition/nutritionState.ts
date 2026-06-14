@@ -1,4 +1,5 @@
 import type { LocalPhoto, MealStatus, NutritionMeal, NutritionMealEdit } from './types';
+import type { AppLanguage } from '../i18n';
 
 export const MAX_PHOTOS_PER_MEAL = 8;
 
@@ -37,42 +38,42 @@ export function removePhoto(photos: LocalPhoto[], uri: string): LocalPhoto[] {
   return photos.filter((photo) => photo.uri !== uri);
 }
 
-export function mealStatusLabel(status: MealStatus): string {
+export function mealStatusLabel(status: MealStatus, language: AppLanguage = 'fr'): string {
   switch (status) {
     case 'uploading':
-      return 'Envoi en cours';
+      return language === 'en' ? 'Uploading' : 'Envoi en cours';
     case 'analyzing':
-      return 'Analyse en cours';
+      return language === 'en' ? 'Analyzing' : 'Analyse en cours';
     case 'ready':
-      return 'Prêt à valider';
+      return language === 'en' ? 'Ready to validate' : 'Prêt à valider';
     case 'needs_review':
-      return 'À revoir';
+      return language === 'en' ? 'Needs review' : 'À revoir';
     case 'validated':
-      return 'Validé';
+      return language === 'en' ? 'Validated' : 'Validé';
     case 'error':
-      return 'Erreur';
+      return language === 'en' ? 'Error' : 'Erreur';
     default:
-      return 'Brouillon';
+      return language === 'en' ? 'Draft' : 'Brouillon';
   }
 }
 
-export function mealNextActionLabel(meal: NutritionMeal): string {
+export function mealNextActionLabel(meal: NutritionMeal, language: AppLanguage = 'fr'): string {
   if (meal.status === 'validated') {
-    return 'Validé dans ALIS';
+    return language === 'en' ? 'Validated in ALIS' : 'Validé dans ALIS';
   }
   if (meal.status === 'ready' && meal.validation_blocked) {
-    return 'Correction requise avant validation';
+    return language === 'en' ? 'Correction required before validation' : 'Correction requise avant validation';
   }
   if (meal.status === 'ready') {
-    return 'Prêt à valider';
+    return language === 'en' ? 'Ready to validate' : 'Prêt à valider';
   }
   if (meal.status === 'needs_review') {
-    return 'Revue nécessaire';
+    return language === 'en' ? 'Review needed' : 'Revue nécessaire';
   }
   if (meal.status === 'error') {
-    return 'Analyse à relancer';
+    return language === 'en' ? 'Rerun analysis' : 'Analyse à relancer';
   }
-  return 'Analyse en cours';
+  return language === 'en' ? 'Analysis in progress' : 'Analyse en cours';
 }
 
 export function buildReadyNotifications(previous: NutritionMeal[], current: NutritionMeal[]): string[] {
@@ -125,11 +126,11 @@ function dayKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function dayTitle(date: Date, now: Date): string {
+function dayTitle(date: Date, now: Date, language: AppLanguage): string {
   if (dayKey(date) === dayKey(now)) {
-    return "Aujourd'hui";
+    return language === 'en' ? 'Today' : "Aujourd'hui";
   }
-  return new Intl.DateTimeFormat('fr-FR', {
+  return new Intl.DateTimeFormat(language === 'en' ? 'en-US' : 'fr-FR', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric'
@@ -140,7 +141,7 @@ function isPendingMeal(meal: NutritionMeal): boolean {
   return meal.status === 'uploading' || meal.status === 'analyzing' || meal.status === 'ready' || meal.status === 'needs_review' || meal.status === 'error';
 }
 
-export function buildJournalDaySections(meals: NutritionMeal[], now = new Date()): JournalDaySection[] {
+export function buildJournalDaySections(meals: NutritionMeal[], now = new Date(), language: AppLanguage = 'fr'): JournalDaySection[] {
   const grouped = new Map<string, JournalDaySection>();
   for (const meal of meals) {
     const date = mealDate(meal);
@@ -149,7 +150,7 @@ export function buildJournalDaySections(meals: NutritionMeal[], now = new Date()
       grouped.get(key) ??
       ({
         key,
-        title: dayTitle(date, now),
+        title: dayTitle(date, now, language),
         meals: [],
         validatedKcal: 0,
         pendingCount: 0,
@@ -176,88 +177,103 @@ export function buildJournalDaySections(meals: NutritionMeal[], now = new Date()
     .sort((a, b) => b.key.localeCompare(a.key));
 }
 
-export function confidenceInsight(meal: NutritionMeal): string {
+export function confidenceInsight(meal: NutritionMeal, language: AppLanguage = 'fr'): string {
   const confidence = meal.confidence || 'en attente';
-  const prefix = confidence === 'low' ? 'Confiance basse' : confidence === 'medium' ? 'Confiance moyenne' : confidence === 'high' ? 'Confiance haute' : 'Confiance en attente';
+  const prefix = language === 'en'
+    ? confidence === 'low' ? 'Low confidence' : confidence === 'medium' ? 'Medium confidence' : confidence === 'high' ? 'High confidence' : 'Confidence pending'
+    : confidence === 'low' ? 'Confiance basse' : confidence === 'medium' ? 'Confiance moyenne' : confidence === 'high' ? 'Confiance haute' : 'Confiance en attente';
   const includedItems = meal.items?.filter((item) => item.included) ?? [];
   const missingSources = includedItems.filter((item) => !item.source).length;
   if (missingSources > 0) {
-    return `${prefix} · source nutritionnelle manquante`;
+    return `${prefix} · ${language === 'en' ? 'missing nutrition source' : 'source nutritionnelle manquante'}`;
   }
   if (meal.validation_blocked) {
-    return `${prefix} · validation bloquée`;
+    return `${prefix} · ${language === 'en' ? 'validation blocked' : 'validation bloquée'}`;
   }
   if (meal.analysis_job?.status === 'failed' || meal.status === 'error') {
-    return `${prefix} · analyse IA en échec`;
+    return `${prefix} · ${language === 'en' ? 'AI analysis failed' : 'analyse IA en échec'}`;
   }
   if (includedItems.some((item) => item.confidence === 'low')) {
-    return `${prefix} · aliment ou portion ambiguë`;
+    return `${prefix} · ${language === 'en' ? 'ambiguous food or portion' : 'aliment ou portion ambiguë'}`;
   }
   if (includedItems.length === 0 && meal.status !== 'validated') {
-    return `${prefix} · aucun aliment exploitable`;
+    return `${prefix} · ${language === 'en' ? 'no usable food item' : 'aucun aliment exploitable'}`;
   }
-  return `${prefix} · sources nutritionnelles vérifiées`;
+  return `${prefix} · ${language === 'en' ? 'nutrition sources checked' : 'sources nutritionnelles vérifiées'}`;
 }
 
-export function analysisStageRows(meal: NutritionMeal): AnalysisStageRow[] {
+export function analysisStageRows(meal: NutritionMeal, language: AppLanguage = 'fr'): AnalysisStageRow[] {
   const includedItems = meal.items?.filter((item) => item.included) ?? [];
   const missingSources = includedItems.filter((item) => !item.source).length;
   const jobStatus = meal.analysis_job?.status;
   const visionState =
     jobStatus === 'failed' || meal.status === 'error'
-      ? 'Erreur'
+      ? language === 'en' ? 'Error' : 'Erreur'
       : jobStatus === 'completed' || meal.status === 'ready' || meal.status === 'needs_review' || meal.status === 'validated'
         ? 'OK'
         : meal.status === 'analyzing' || meal.status === 'uploading'
-          ? 'En cours'
-          : 'En attente';
+          ? language === 'en' ? 'In progress' : 'En cours'
+          : language === 'en' ? 'Pending' : 'En attente';
+  const waiting = language === 'en' ? 'Pending' : 'En attente';
   return [
     {
       label: 'Photos',
-      state: (meal.photo_count ?? meal.photos?.length ?? 0) > 0 ? 'OK' : 'En attente',
-      detail: `${meal.photo_count ?? meal.photos?.length ?? 0} photo(s) reçue(s)`
+      state: (meal.photo_count ?? meal.photos?.length ?? 0) > 0 ? 'OK' : waiting,
+      detail: language === 'en'
+        ? `${meal.photo_count ?? meal.photos?.length ?? 0} photo(s) received`
+        : `${meal.photo_count ?? meal.photos?.length ?? 0} photo(s) reçue(s)`
     },
     {
-      label: 'IA vision',
+      label: language === 'en' ? 'Vision AI' : 'IA vision',
       state: visionState,
-      detail: visionState === 'OK' ? 'analyse terminée' : visionState === 'Erreur' ? 'analyse à relancer' : 'analyse en cours'
+      detail: visionState === 'OK'
+        ? language === 'en' ? 'analysis complete' : 'analyse terminée'
+        : visionState === 'Erreur' || visionState === 'Error'
+          ? language === 'en' ? 'rerun analysis' : 'analyse à relancer'
+          : language === 'en' ? 'analysis in progress' : 'analyse en cours'
     },
     {
       label: 'Sources',
-      state: missingSources > 0 ? 'À corriger' : includedItems.length > 0 ? 'OK' : 'En attente',
+      state: missingSources > 0 ? language === 'en' ? 'To fix' : 'À corriger' : includedItems.length > 0 ? 'OK' : waiting,
       detail:
         missingSources > 0
-          ? `${missingSources} aliment${missingSources > 1 ? 's' : ''} sans source`
+          ? language === 'en'
+            ? `${missingSources} food item${missingSources > 1 ? 's' : ''} without source`
+            : `${missingSources} aliment${missingSources > 1 ? 's' : ''} sans source`
           : includedItems.length > 0
-            ? `${includedItems.length} aliment${includedItems.length > 1 ? 's' : ''} sourcé${includedItems.length > 1 ? 's' : ''}`
-            : 'aucun aliment exploitable'
+            ? language === 'en'
+              ? `${includedItems.length} sourced food item${includedItems.length > 1 ? 's' : ''}`
+              : `${includedItems.length} aliment${includedItems.length > 1 ? 's' : ''} sourcé${includedItems.length > 1 ? 's' : ''}`
+            : language === 'en' ? 'no usable food item' : 'aucun aliment exploitable'
     },
     {
       label: 'Validation',
-      state: meal.status === 'validated' ? 'OK' : meal.validation_blocked ? 'Bloquée' : meal.status === 'ready' ? 'Prête' : 'En attente',
+      state: meal.status === 'validated' ? 'OK' : meal.validation_blocked ? language === 'en' ? 'Blocked' : 'Bloquée' : meal.status === 'ready' ? language === 'en' ? 'Ready' : 'Prête' : waiting,
       detail:
         meal.status === 'validated'
-          ? 'envoyé à ALIS'
+          ? language === 'en' ? 'sent to ALIS' : 'envoyé à ALIS'
           : meal.validation_blocked
-            ? 'corrige les sources avant ALIS'
+            ? language === 'en' ? 'fix sources before ALIS' : 'corrige les sources avant ALIS'
             : meal.status === 'ready'
-              ? 'validation disponible'
-              : 'attente du résultat'
+              ? language === 'en' ? 'validation available' : 'validation disponible'
+              : language === 'en' ? 'waiting for result' : 'attente du résultat'
     }
   ];
 }
 
-export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
+export function analysisProgress(meal: NutritionMeal, language: AppLanguage = 'fr'): AnalysisProgress {
   const job = meal.analysis_job;
-  const attempts = job?.attempts ? ` · tentative ${job.attempts}` : '';
+  const attempts = job?.attempts ? ` · ${language === 'en' ? 'attempt' : 'tentative'} ${job.attempts}` : '';
   const totalSteps = 4;
   if (meal.status === 'uploading') {
     return {
       currentStep: 1,
       totalSteps,
       percent: 25,
-      title: 'Envoi des photos',
-      detail: `${meal.photo_count ?? meal.photos?.length ?? 0} photo(s) vers l'analyse locale`,
+      title: language === 'en' ? 'Uploading photos' : 'Envoi des photos',
+      detail: language === 'en'
+        ? `${meal.photo_count ?? meal.photos?.length ?? 0} photo(s) sent to local analysis`
+        : `${meal.photo_count ?? meal.photos?.length ?? 0} photo(s) vers l'analyse locale`,
       tone: 'active'
     };
   }
@@ -266,8 +282,8 @@ export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
       currentStep: 2,
       totalSteps,
       percent: 50,
-      title: 'Analyse en erreur',
-      detail: job?.error_message || meal.error_message || 'Relance possible depuis la revue',
+      title: language === 'en' ? 'Analysis error' : 'Analyse en erreur',
+      detail: job?.error_message || meal.error_message || (language === 'en' ? 'You can rerun it from review' : 'Relance possible depuis la revue'),
       tone: 'error'
     };
   }
@@ -277,8 +293,8 @@ export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
         currentStep: 3,
         totalSteps,
         percent: 75,
-        title: 'Analyse locale en cours',
-        detail: `Analyse locale${attempts}`,
+        title: language === 'en' ? 'Local analysis in progress' : 'Analyse locale en cours',
+        detail: `${language === 'en' ? 'Local analysis' : 'Analyse locale'}${attempts}`,
         tone: 'active'
       };
     }
@@ -286,8 +302,8 @@ export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
       currentStep: 2,
       totalSteps,
       percent: 50,
-      title: 'En file d’attente',
-      detail: `Analyse locale${attempts}`,
+      title: language === 'en' ? 'Queued' : 'En file d’attente',
+      detail: `${language === 'en' ? 'Local analysis' : 'Analyse locale'}${attempts}`,
       tone: 'active'
     };
   }
@@ -296,8 +312,8 @@ export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
       currentStep: 4,
       totalSteps,
       percent: 100,
-      title: 'Correction requise',
-      detail: 'Une source ou une portion bloque la validation ALIS',
+      title: language === 'en' ? 'Correction required' : 'Correction requise',
+      detail: language === 'en' ? 'A source or portion blocks ALIS validation' : 'Une source ou une portion bloque la validation ALIS',
       tone: 'blocked'
     };
   }
@@ -306,8 +322,8 @@ export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
       currentStep: 4,
       totalSteps,
       percent: 100,
-      title: 'Validé dans ALIS',
-      detail: 'ALIS et Coach peuvent utiliser ce repas',
+      title: language === 'en' ? 'Validated in ALIS' : 'Validé dans ALIS',
+      detail: language === 'en' ? 'ALIS and Coach can use this meal' : 'ALIS et Coach peuvent utiliser ce repas',
       tone: 'complete'
     };
   }
@@ -316,8 +332,8 @@ export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
       currentStep: 4,
       totalSteps,
       percent: 100,
-      title: 'Prêt à valider',
-      detail: 'Vérifie les aliments et valide dans ALIS',
+      title: language === 'en' ? 'Ready to validate' : 'Prêt à valider',
+      detail: language === 'en' ? 'Check the foods and validate in ALIS' : 'Vérifie les aliments et valide dans ALIS',
       tone: 'complete'
     };
   }
@@ -325,21 +341,21 @@ export function analysisProgress(meal: NutritionMeal): AnalysisProgress {
     currentStep: 0,
     totalSteps,
     percent: 0,
-    title: 'Brouillon',
-    detail: 'Ajoute des photos pour lancer l’analyse',
+    title: language === 'en' ? 'Draft' : 'Brouillon',
+    detail: language === 'en' ? 'Add photos to start analysis' : 'Ajoute des photos pour lancer l’analyse',
     tone: 'active'
   };
 }
 
-export function alisImpactLabel(meal: NutritionMeal): string {
+export function alisImpactLabel(meal: NutritionMeal, language: AppLanguage = 'fr'): string {
   if (meal.status === 'validated') {
-    return 'ALIS · transmis à ALIS et Coach';
+    return language === 'en' ? 'ALIS · sent to ALIS and Coach' : 'ALIS · transmis à ALIS et Coach';
   }
   if (meal.status === 'ready' && !meal.validation_blocked) {
-    return 'ALIS · prêt, en attente de validation';
+    return language === 'en' ? 'ALIS · ready, waiting for validation' : 'ALIS · prêt, en attente de validation';
   }
   if (meal.status === 'needs_review' || meal.validation_blocked) {
-    return 'ALIS · non transmis, correction requise';
+    return language === 'en' ? 'ALIS · not sent, correction required' : 'ALIS · non transmis, correction requise';
   }
-  return 'ALIS · non transmis';
+  return language === 'en' ? 'ALIS · not sent' : 'ALIS · non transmis';
 }

@@ -1,6 +1,7 @@
 import { DEVICE_NAME } from './config';
 import { formatActivityLabel, formatDuration, formatParisDateTime } from './format';
-import type { CoachAction, CoachAdvicePayload, DashboardData, LifeBalanceScores, MorningContext, OverviewContext, Settings, WindowKey } from './types';
+import type { AppLanguage } from './i18n';
+import type { CoachAction, CoachAdvicePayload, DashboardData, LifeBalanceScores, MorningContext, OverviewContext, Settings, SourceDiagnostics, SourceDiagnosticMetric, WindowKey } from './types';
 
 export function overviewForWindow(dashboard: DashboardData, window: WindowKey): OverviewContext {
   if (window === '24h') {
@@ -104,16 +105,39 @@ export function sleepDetailsForToday(dashboard: DashboardData) {
   };
 }
 
-export function morningInsightForToday(dashboard: DashboardData): { status: string; title: string; message: string } | null {
+export function morningInsightForToday(dashboard: DashboardData, language: AppLanguage = 'fr'): { status: string; title: string; message: string } | null {
   const morning = dashboard.morning_context;
   if (!morning?.message) {
     return null;
   }
+  const fallbackTitle = morning.is_today_partial
+    ? language === 'en' ? 'Partial morning data' : 'Données du matin partielles'
+    : language === 'en' ? 'Daily reading' : 'Lecture du jour';
   return {
     status: morning.status ?? (morning.is_today_partial ? 'partial_today' : 'ready'),
-    title: morning.title ?? (morning.is_today_partial ? 'Données du matin partielles' : 'Lecture du jour'),
-    message: morning.message
+    title: language === 'en' ? englishMorningTitle(morning.status, morning.is_today_partial) : morning.title ?? fallbackTitle,
+    message: language === 'en' ? englishMorningMessage(morning.status, morning.is_today_partial) : morning.message
   };
+}
+
+function englishMorningTitle(status: MorningContext['status'] | undefined, isTodayPartial: boolean): string {
+  if (status === 'sleep_missing') {
+    return 'Night not measured';
+  }
+  if (status === 'partial_today' || isTodayPartial) {
+    return 'Partial morning data';
+  }
+  return 'Daily reading';
+}
+
+function englishMorningMessage(status: MorningContext['status'] | undefined, isTodayPartial: boolean): string {
+  if (status === 'sleep_missing') {
+    return 'No usable sleep data was received for the recent window, so sleep scores are unavailable and recovery is estimated with low reliability.';
+  }
+  if (status === 'partial_today' || isTodayPartial) {
+    return 'Today is still partial: reading based on the last complete day and the last measured night.';
+  }
+  return 'Recent data is usable for today’s reading.';
 }
 
 export function coachActionsForToday(dashboard: DashboardData): CoachAction[] {
@@ -124,42 +148,54 @@ export function coachActionsForToday(dashboard: DashboardData): CoachAction[] {
   return dashboard.windows.last_24h.coach_actions ?? [];
 }
 
-export function nutritionInsight(context: OverviewContext) {
+export function nutritionInsight(context: OverviewContext, language: AppLanguage = 'fr') {
   const nutrition = context.nutrition;
   const meals = Math.round(nutrition.meals || 0);
   const averageDailyEnergy = Math.round(nutrition.average_daily_energy_kcal || 0);
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
   return {
-    title: meals > 0 ? 'Nutrition validée' : 'Nutrition à compléter',
-    energy: `${Math.round(nutrition.energy_kcal || 0).toLocaleString('fr-FR')} kcal`,
-    meals: meals > 1 ? `${meals} repas validés` : meals === 1 ? '1 repas validé' : 'Aucun repas validé',
-    average: averageDailyEnergy > 0 ? `Moyenne ${averageDailyEnergy.toLocaleString('fr-FR')} kcal/j` : 'Moyenne à compléter',
-    latestMeal: nutrition.latest_meal_at ? `Dernier repas ${formatParisDateTime(nutrition.latest_meal_at)}` : 'Aucun repas validé récent',
-    macros: `P ${Math.round(nutrition.protein_g || 0)} g · G ${Math.round(nutrition.carbohydrates_g || 0)} g · L ${Math.round(nutrition.fat_g || 0)} g`,
-    hydration: `${(nutrition.hydration_liters || 0).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} L hydratation`,
-    prompt: meals > 0 ? 'Peux-tu analyser ma nutrition validée du jour ?' : 'Comment structurer ma nutrition aujourd’hui ?'
+    title: meals > 0 ? language === 'en' ? 'Validated nutrition' : 'Nutrition validée' : language === 'en' ? 'Nutrition to complete' : 'Nutrition à compléter',
+    energy: `${Math.round(nutrition.energy_kcal || 0).toLocaleString(locale)} kcal`,
+    meals: language === 'en'
+      ? meals > 1 ? `${meals} validated meals` : meals === 1 ? '1 validated meal' : 'No validated meal'
+      : meals > 1 ? `${meals} repas validés` : meals === 1 ? '1 repas validé' : 'Aucun repas validé',
+    average: averageDailyEnergy > 0
+      ? language === 'en' ? `Average ${averageDailyEnergy.toLocaleString(locale)} kcal/day` : `Moyenne ${averageDailyEnergy.toLocaleString(locale)} kcal/j`
+      : language === 'en' ? 'Average to complete' : 'Moyenne à compléter',
+    latestMeal: nutrition.latest_meal_at
+      ? language === 'en' ? `Latest meal ${formatParisDateTime(nutrition.latest_meal_at)}` : `Dernier repas ${formatParisDateTime(nutrition.latest_meal_at)}`
+      : language === 'en' ? 'No recent validated meal' : 'Aucun repas validé récent',
+    macros: language === 'en'
+      ? `P ${Math.round(nutrition.protein_g || 0)} g · C ${Math.round(nutrition.carbohydrates_g || 0)} g · F ${Math.round(nutrition.fat_g || 0)} g`
+      : `P ${Math.round(nutrition.protein_g || 0)} g · G ${Math.round(nutrition.carbohydrates_g || 0)} g · L ${Math.round(nutrition.fat_g || 0)} g`,
+    hydration: `${(nutrition.hydration_liters || 0).toLocaleString(locale, { maximumFractionDigits: 1 })} L ${language === 'en' ? 'hydration' : 'hydratation'}`,
+    prompt: meals > 0
+      ? language === 'en' ? 'Can you analyze my validated nutrition today?' : 'Peux-tu analyser ma nutrition validée du jour ?'
+      : language === 'en' ? 'How should I structure my nutrition today?' : 'Comment structurer ma nutrition aujourd’hui ?'
   };
 }
 
-export function workoutCalorieInsight(context: OverviewContext): { label: string; value: string } | null {
+export function workoutCalorieInsight(context: OverviewContext, language: AppLanguage = 'fr'): { label: string; value: string } | null {
   const total = Number(context.activity.active_calories_kcal || 0);
   if (total <= 0) {
     return null;
   }
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
   if (context.window === '24h') {
     return {
-      label: 'Dépense calorique',
-      value: `${Math.round(total).toLocaleString('fr-FR')} kcal`
+      label: language === 'en' ? 'Active calories' : 'Dépense calorique',
+      value: `${Math.round(total).toLocaleString(locale)} kcal`
     };
   }
   const average = Number(context.activity.average_daily_active_calories_kcal || 0)
     || total / Math.max(1, context.series.length);
   return {
-    label: 'Dépense calorique moy.',
-    value: `${Math.round(average).toLocaleString('fr-FR')} kcal/j`
+    label: language === 'en' ? 'Avg. active calories' : 'Dépense calorique moy.',
+    value: `${Math.round(average).toLocaleString(locale)} ${language === 'en' ? 'kcal/day' : 'kcal/j'}`
   };
 }
 
-export function todayCardioInsight(context: OverviewContext): { label: string; value: string; detail: string } | null {
+export function todayCardioInsight(context: OverviewContext, language: AppLanguage = 'fr'): { label: string; value: string; detail: string } | null {
   const biometrics = context.biometrics;
   if (!biometrics || Number(biometrics.heart_rate_records || 0) <= 0) {
     return null;
@@ -174,13 +210,13 @@ export function todayCardioInsight(context: OverviewContext): { label: string; v
     ? roundedMin === roundedMax ? `${roundedMin} bpm` : `${roundedMin}-${roundedMax} bpm`
     : average > 0 ? `${Math.round(average)} bpm` : '--';
   const details = [
-    average > 0 ? `Moyenne ${Math.round(average)} bpm` : null,
-    resting > 0 ? `repos ${Math.round(resting)} bpm` : null
+    average > 0 ? `${language === 'en' ? 'Average' : 'Moyenne'} ${Math.round(average)} bpm` : null,
+    resting > 0 ? `${language === 'en' ? 'resting' : 'repos'} ${Math.round(resting)} bpm` : null
   ].filter(Boolean);
   return {
-    label: 'Fréquence cardiaque',
+    label: language === 'en' ? 'Heart rate' : 'Fréquence cardiaque',
     value,
-    detail: details.length ? details.join(' · ') : 'Données reçues'
+    detail: details.length ? details.join(' · ') : language === 'en' ? 'Data received' : 'Données reçues'
   };
 }
 
@@ -195,20 +231,21 @@ export type BiometricSummary = {
   emptyLabel: string;
 };
 
-export function biometricChartData(context: OverviewContext, metric: BiometricMetric) {
+export function biometricChartData(context: OverviewContext, metric: BiometricMetric, language: AppLanguage = 'fr') {
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
   return context.series.map((day) => {
     const value = Number(metric === 'hrv' ? day.hrv_rmssd_ms || 0 : day.vo2_max_ml_kg_min || 0);
     return {
       date: day.date,
       value,
       label: metric === 'hrv'
-        ? `${Math.round(value).toLocaleString('fr-FR')} ms`
-        : value.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+        ? `${Math.round(value).toLocaleString(locale)} ms`
+        : value.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
     };
   });
 }
 
-export function biometricSummary(context: OverviewContext, metric: BiometricMetric): BiometricSummary {
+export function biometricSummary(context: OverviewContext, metric: BiometricMetric, language: AppLanguage = 'fr'): BiometricSummary {
   const values = context.series
     .map((day) => Number(metric === 'hrv' ? day.hrv_rmssd_ms || 0 : day.vo2_max_ml_kg_min || 0))
     .filter((value) => Number.isFinite(value) && value > 0)
@@ -220,36 +257,137 @@ export function biometricSummary(context: OverviewContext, metric: BiometricMetr
       average: '--',
       median: '--',
       sampleCount: 0,
-      emptyLabel: 'Aucune donnée sur cette période.'
+      emptyLabel: language === 'en' ? 'No data for this period.' : 'Aucune donnée sur cette période.'
     };
   }
   const total = values.reduce((sum, value) => sum + value, 0);
   return {
     title: biometricTitle(metric),
-    interval: formatBiometricRange(values[0], values[values.length - 1], metric),
-    average: formatBiometricValue(total / values.length, metric),
-    median: formatBiometricValue(median(values), metric),
+    interval: formatBiometricRange(values[0], values[values.length - 1], metric, language),
+    average: formatBiometricValue(total / values.length, metric, language),
+    median: formatBiometricValue(median(values), metric, language),
     sampleCount: values.length,
-    emptyLabel: 'Aucune donnée sur cette période.'
+    emptyLabel: language === 'en' ? 'No data for this period.' : 'Aucune donnée sur cette période.'
   };
+}
+
+export type SourceDiagnosticPresentation = {
+  title: string;
+  selected: string;
+  latest: string;
+  sources: string[];
+};
+
+export function formatSourceDiagnostics(diagnostics?: SourceDiagnostics | null, language: AppLanguage = 'fr'): SourceDiagnosticPresentation[] {
+  if (!diagnostics?.domains) {
+    return [];
+  }
+  const preferredMetrics = [
+    diagnostics.domains.activity?.metrics.steps,
+    diagnostics.domains.activity?.metrics.active_calories,
+    diagnostics.domains.workouts?.metrics.workouts,
+    diagnostics.domains.sleep?.metrics.sleep,
+    diagnostics.domains.biometrics?.metrics.heart_rate,
+    diagnostics.domains.biometrics?.metrics.hrv,
+    diagnostics.domains.biometrics?.metrics.vo2_max
+  ].filter(Boolean) as SourceDiagnosticMetric[];
+
+  const seen = new Set<string>();
+  return preferredMetrics
+    .filter((metric) => {
+      const key = `${metric.domain}:${metric.metric}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .map((metric) => ({
+      title: sourceDiagnosticTitle(metric, language),
+      selected: metric.status === 'received' && metric.selected_source_label
+        ? language === 'en' ? `Selected source: ${metric.selected_source_label}` : `Source retenue : ${metric.selected_source_label}`
+        : language === 'en' ? 'Data not received' : 'Donnée non reçue',
+      latest: `${language === 'en' ? 'Latest data received' : 'Dernière donnée reçue'} : ${metric.latest_received_at ? formatParisDateTime(metric.latest_received_at) : language === 'en' ? 'not received' : 'non reçu'}`,
+      sources: metric.sources.map((source) => language === 'en'
+        ? `${source.source_label} wrote ${formatDiagnosticValue(source.total, metric, language)}`
+        : `${source.source_label} a écrit ${formatDiagnosticValue(source.total, metric, language)}`)
+    }));
+}
+
+function sourceDiagnosticTitle(metric: SourceDiagnosticMetric, language: AppLanguage): string {
+  if (language === 'fr') {
+    return metric.label;
+  }
+  if (metric.metric === 'steps') {
+    return 'Steps today';
+  }
+  if (metric.metric === 'active_calories') {
+    return 'Active calories';
+  }
+  if (metric.metric === 'workouts') {
+    return 'Workout sessions';
+  }
+  if (metric.metric === 'sleep') {
+    return 'Sleep';
+  }
+  if (metric.metric === 'heart_rate') {
+    return 'Heart rate';
+  }
+  if (metric.metric === 'hrv') {
+    return 'Heart rate variability';
+  }
+  if (metric.metric === 'vo2_max') {
+    return 'VO2 max';
+  }
+  return metric.label;
+}
+
+function formatDiagnosticValue(value: number, metric: SourceDiagnosticMetric, language: AppLanguage = 'fr'): string {
+  const rounded = Number.isInteger(value) ? value : Math.round(value * 10) / 10;
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
+  const formatted = rounded.toLocaleString(locale, { maximumFractionDigits: 1 });
+  if (metric.metric === 'steps') {
+    return `${formatted} ${language === 'en' ? 'steps' : 'pas'}`;
+  }
+  if (metric.metric === 'workouts') {
+    if (language === 'en') {
+      return `${formatted} ${rounded === 1 ? 'session' : 'sessions'}`;
+    }
+    return `${formatted} séance${rounded > 1 ? 's' : ''}`;
+  }
+  if (metric.unit === 'kcal') {
+    return `${formatted} kcal`;
+  }
+  if (metric.unit === 'min') {
+    return `${formatted} min`;
+  }
+  if (metric.unit === 'm') {
+    return `${formatted} m`;
+  }
+  if (metric.unit) {
+    return `${formatted} ${metric.unit}`;
+  }
+  return formatted;
 }
 
 function biometricTitle(metric: BiometricMetric): string {
   return metric === 'hrv' ? 'Variabilité cardiaque' : 'VO2 max';
 }
 
-function formatBiometricValue(value: number, metric: BiometricMetric): string {
+function formatBiometricValue(value: number, metric: BiometricMetric, language: AppLanguage = 'fr'): string {
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
   if (metric === 'hrv') {
-    return `${Math.round(value).toLocaleString('fr-FR')} ms`;
+    return `${Math.round(value).toLocaleString(locale)} ms`;
   }
-  return value.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return value.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-function formatBiometricRange(min: number, max: number, metric: BiometricMetric): string {
+function formatBiometricRange(min: number, max: number, metric: BiometricMetric, language: AppLanguage = 'fr'): string {
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
   if (metric === 'hrv') {
-    return `${Math.round(min).toLocaleString('fr-FR')}-${Math.round(max).toLocaleString('fr-FR')} ms`;
+    return `${Math.round(min).toLocaleString(locale)}-${Math.round(max).toLocaleString(locale)} ms`;
   }
-  return `${formatBiometricValue(min, metric)}-${formatBiometricValue(max, metric)}`;
+  return `${formatBiometricValue(min, metric, language)}-${formatBiometricValue(max, metric, language)}`;
 }
 
 function median(values: number[]): number {
@@ -260,18 +398,18 @@ function median(values: number[]): number {
   return (values[middle - 1] + values[middle]) / 2;
 }
 
-export function todayWorkoutPresentation(context: OverviewContext): {
+export function todayWorkoutPresentation(context: OverviewContext, language: AppLanguage = 'fr'): {
   value: string;
   detail: string;
   calorie: ReturnType<typeof workoutCalorieInsight>;
 } {
   const workouts = context.workouts.history ?? [];
-  const workoutPreview = workouts.slice(0, 3).map((item) => `${formatActivityLabel(item.activity_type)} - ${formatDuration(item.duration_minutes)}`);
+  const workoutPreview = workouts.slice(0, 3).map((item) => `${formatActivityLabel(item.activity_type, language)} - ${formatDuration(item.duration_minutes)}`);
   const hiddenWorkoutCount = Math.max(0, workouts.length - workoutPreview.length);
   return {
-    value: workouts.length === 0 ? 'Aucun' : workouts.length === 1 ? formatActivityLabel(workouts[0].activity_type) : `${workouts.length} sports`,
-    detail: workoutPreview.length > 0 ? `${workoutPreview.join('\n')}${hiddenWorkoutCount > 0 ? `\n+${hiddenWorkoutCount} autre(s)` : ''}` : '-',
-    calorie: workoutCalorieInsight(context)
+    value: workouts.length === 0 ? language === 'en' ? 'None' : 'Aucun' : workouts.length === 1 ? formatActivityLabel(workouts[0].activity_type, language) : `${workouts.length} ${language === 'en' ? 'sports' : 'sports'}`,
+    detail: workoutPreview.length > 0 ? `${workoutPreview.join('\n')}${hiddenWorkoutCount > 0 ? `\n+${hiddenWorkoutCount} ${language === 'en' ? 'more' : 'autre(s)'}` : ''}` : '-',
+    calorie: workoutCalorieInsight(context, language)
   };
 }
 

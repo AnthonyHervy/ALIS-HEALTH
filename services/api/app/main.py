@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -60,6 +61,19 @@ from app.services.processing import ProcessingService
 from app.services.sources import SourceConfigService
 
 
+def requested_language(
+    payload: CoachChatRequest | None = None,
+    http_request: Request | None = None,
+) -> str:
+    if payload and payload.language in {"fr", "en"}:
+        return payload.language
+    header = (http_request.headers.get("accept-language") if http_request else "") or ""
+    primary = header.split(",", 1)[0].split(";", 1)[0].strip().lower()
+    if primary.startswith("en"):
+        return "en"
+    return "fr"
+
+
 def create_app(settings: Settings = default_settings) -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
@@ -76,6 +90,43 @@ def create_app(settings: Settings = default_settings) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.state.rate_limit_buckets = {}
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next):
+        limit = int(getattr(request.app.state.settings, "api_rate_limit_per_minute", 0) or 0)
+        if limit <= 0 or request.url.path in {"/health/live", "/health/ready"}:
+            return await call_next(request)
+
+        window_seconds = int(getattr(request.app.state.settings, "api_rate_limit_window_seconds", 60) or 60)
+        authorization = request.headers.get("authorization") or ""
+        if authorization.lower().startswith("bearer "):
+            key = f"token:{authorization.split(' ', 1)[1].strip()}"
+        else:
+            client_host = request.client.host if request.client else "unknown"
+            key = f"ip:{client_host}"
+
+        now = monotonic()
+        buckets = request.app.state.rate_limit_buckets
+        bucket = buckets.get(key)
+        if bucket is None or now >= bucket["reset_at"]:
+            bucket = {"count": 0, "reset_at": now + window_seconds}
+            buckets[key] = bucket
+        if bucket["count"] >= limit:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded"},
+                headers={
+                    "Retry-After": str(max(1, int(bucket["reset_at"] - now))),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                },
+            )
+        bucket["count"] += 1
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(limit)
+        response.headers["X-RateLimit-Remaining"] = str(max(0, limit - bucket["count"]))
+        return response
 
     @app.exception_handler(ValueError)
     async def value_error_handler(_request: Request, exc: ValueError):
@@ -132,6 +183,15 @@ def create_app(settings: Settings = default_settings) -> FastAPI:
     ):
         await AuthService(db, settings).revoke_token(token)
         return {"status": "revoked"}
+
+    @app.post(f"{settings.api_v1_prefix}/auth/rotate", response_model=RegisterDeviceResponse)
+    async def rotate_device(
+        token: str = Depends(current_token),
+        user: HealthUser = Depends(current_user),
+        db: AsyncSession = Depends(get_session),
+    ):
+        user_id, replacement = await AuthService(db, settings).rotate_token(token, user.id)
+        return RegisterDeviceResponse(user_id=user_id, device_token=replacement)
 
     @app.post(f"{settings.api_v1_prefix}/ingest/health", response_model=HealthBatchResponse)
     async def ingest_health(
@@ -557,10 +617,11 @@ def create_app(settings: Settings = default_settings) -> FastAPI:
 
     @app.get(f"{settings.api_v1_prefix}/coach/today-advice", response_model=CoachTodayAdviceResponse)
     async def coach_today_advice(
+        http_request: Request,
         user: HealthUser = Depends(current_user),
         db: AsyncSession = Depends(get_session),
     ):
-        return await coach_service(db).today_advice(user.id)
+        return await coach_service(db).today_advice(user.id, language=requested_language(http_request=http_request))
 
     @app.get(f"{settings.api_v1_prefix}/coach/status")
     async def coach_status(
@@ -571,11 +632,18 @@ def create_app(settings: Settings = default_settings) -> FastAPI:
 
     @app.post(f"{settings.api_v1_prefix}/coach/chat", response_model=CoachChatResponse)
     async def coach_chat(
-        request: CoachChatRequest,
+        payload: CoachChatRequest,
+        http_request: Request,
         user: HealthUser = Depends(current_user),
         db: AsyncSession = Depends(get_session),
     ):
-        response = await coach_service(db).chat(user.id, request.message, request.history, request.mode)
+        response = await coach_service(db).chat(
+            user.id,
+            payload.message,
+            payload.history,
+            payload.mode,
+            language=requested_language(payload, http_request),
+        )
         return CoachChatResponse(
             version="healthconnect.coach.chat.v1",
             generated_at=datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
@@ -586,10 +654,13 @@ def create_app(settings: Settings = default_settings) -> FastAPI:
 
     @app.post(f"{settings.api_v1_prefix}/coach/chat/stream")
     async def coach_chat_stream(
-        request: CoachChatRequest,
+        payload: CoachChatRequest,
+        http_request: Request,
         user: HealthUser = Depends(current_user),
         db: AsyncSession = Depends(get_session),
     ):
+        language = requested_language(payload, http_request)
+
         async def events():
             yield "event: meta\n"
             yield "data: " + json.dumps(
@@ -599,7 +670,13 @@ def create_app(settings: Settings = default_settings) -> FastAPI:
                 }
             ) + "\n\n"
             try:
-                async for chunk in coach_service(db).stream_chat(user.id, request.message, request.history, request.mode):
+                async for chunk in coach_service(db).stream_chat(
+                    user.id,
+                    payload.message,
+                    payload.history,
+                    payload.mode,
+                    language=language,
+                ):
                     yield "event: delta\n"
                     yield "data: " + json.dumps({"text": chunk}, ensure_ascii=False) + "\n\n"
                 yield "event: done\n"

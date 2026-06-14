@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.py[cod]
+*.egg-info/
+
+# Local configuration and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.keystore
+*.jks
+*.p12
+secrets/
+credentials/
+
+# Build outputs and caches
+build/
+dist/
+.expo/
+.gradle/
+.cxx/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+*.apk
+*.aab
+*.ipa
+*.app
+*.log
+.cache/
+
+# Local files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
