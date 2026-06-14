@@ -218,4 +218,7 @@ def test_reliability_marks_missing_metric_without_implying_zero_behavior():
     assert hrv["status"] == "missing"
     assert hrv["confidence"] == "low"
     assert "pas recue" in hrv["user_explanation"].lower()
-    assert "ne signifie pas" in hrv["coach_reason"].lower()
+    coach_reason = hrv["coach_reason"].lower()
+    assert "ne signifie pas" in coach_reason
+    assert "utilisateur" in coach_reason
+    assert "produit" in coach_reason or "comportement" in coach_reason
