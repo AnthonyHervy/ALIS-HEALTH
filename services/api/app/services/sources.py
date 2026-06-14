@@ -807,7 +807,10 @@ def selected_raw_daily_sums(
             )[0]
         )
         if fallback_to_best_source_ratio:
-            best_source, best_values = max(sources.items(), key=lambda item: item[1]["total"])
+            best_source, best_values = max(
+                sources.items(),
+                key=lambda item: (item[1]["total"], item[1]["records"], item[0]),
+            )
             selected_total = sources[source]["total"]
             if best_source != source and (
                 (selected_total <= 0 and best_values["total"] > 0)

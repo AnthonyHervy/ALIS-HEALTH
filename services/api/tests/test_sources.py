@@ -219,6 +219,54 @@ def test_selected_raw_daily_sums_uses_best_source_when_selected_source_is_absent
     assert second_order["2026-06-14"]["total"] == 9000
 
 
+def test_selected_raw_daily_sums_uses_deterministic_best_source_for_ratio_fallback():
+    selected_record = {
+        "startTime": "2026-06-14T06:00:00+00:00",
+        "endTime": "2026-06-14T18:00:00+00:00",
+        "count": 1000,
+        "metadata": {
+            "id": "selected-steps",
+            "dataOrigin": "android",
+        },
+    }
+    source_a_record = {
+        "startTime": "2026-06-14T06:00:00+00:00",
+        "endTime": "2026-06-14T18:00:00+00:00",
+        "count": 2000,
+        "metadata": {
+            "id": "source-a-steps",
+            "dataOrigin": "source-a",
+        },
+    }
+    source_z_record = {
+        "startTime": "2026-06-14T06:00:00+00:00",
+        "endTime": "2026-06-14T18:00:00+00:00",
+        "count": 2000,
+        "metadata": {
+            "id": "source-z-steps",
+            "dataOrigin": "source-z",
+        },
+    }
+
+    def totals_for(records: list[dict]) -> dict:
+        return selected_raw_daily_sums(
+            [{"raw_records": {"Steps": records}}],
+            record_type="Steps",
+            value_path=["count"],
+            selected_source="android",
+            start=datetime(2026, 6, 14, 0, 0, tzinfo=UTC),
+            fallback_to_best_source_ratio=1.5,
+        )
+
+    first_order = totals_for([selected_record, source_a_record, source_z_record])
+    second_order = totals_for([selected_record, source_z_record, source_a_record])
+
+    assert first_order["2026-06-14"]["source"] == "source-z"
+    assert second_order["2026-06-14"]["source"] == "source-z"
+    assert first_order["2026-06-14"]["total"] == 2000
+    assert second_order["2026-06-14"]["total"] == 2000
+
+
 def test_reliability_marks_complete_preferred_source_as_measured():
     diagnostics = {
         "generated_at": "2026-06-14T12:00:00+00:00",
@@ -426,6 +474,92 @@ def test_reliability_falls_back_when_selected_source_value_is_invalid():
     assert steps["status"] != "missing"
     assert steps["selected_source_label"] == "Garmin"
     assert steps["selected_value"] == 9000
+
+
+def test_reliability_marks_fresh_source_disagreement_as_conflict():
+    diagnostics = {
+        "generated_at": "2026-06-14T12:00:00+00:00",
+        "domains": {
+            "activity": {
+                "selected_source": "android",
+                "selected_source_label": "Android",
+                "metrics": {
+                    "active_calories": metric(
+                        "active_calories",
+                        selected_source="android",
+                        selected_label="Android",
+                        selected_value=400,
+                        sources=[
+                            {
+                                "source": "android",
+                                "source_label": "Android",
+                                "total": 400,
+                                "records": 1,
+                                "latest_received_at": "2026-06-14T08:00:00+00:00",
+                                "selected": True,
+                            },
+                            {
+                                "source": "com.garmin.android.apps.connectmobile",
+                                "source_label": "Garmin",
+                                "total": 900,
+                                "records": 3,
+                                "latest_received_at": "2026-06-14T12:00:00+00:00",
+                                "selected": False,
+                            },
+                        ],
+                        unit="kcal",
+                    )
+                },
+            }
+        },
+    }
+
+    summary = build_data_reliability_summary(diagnostics, local_day="2026-06-14")
+
+    active_calories = summary["metrics"]["active_calories"]
+    assert active_calories["status"] == "conflict"
+    assert active_calories["confidence"] == "medium"
+    assert active_calories["badge_label"] == "A verifier"
+    assert active_calories["selected_source_label"] == "Android"
+
+
+def test_reliability_marks_stale_selected_source_as_partial():
+    diagnostics = {
+        "generated_at": "2026-06-14T12:00:00+00:00",
+        "domains": {
+            "activity": {
+                "selected_source": "android",
+                "selected_source_label": "Android",
+                "metrics": {
+                    "active_calories": metric(
+                        "active_calories",
+                        selected_source="android",
+                        selected_label="Android",
+                        selected_value=400,
+                        sources=[
+                            {
+                                "source": "android",
+                                "source_label": "Android",
+                                "total": 400,
+                                "records": 1,
+                                "latest_received_at": "2026-06-13T12:00:00+00:00",
+                                "selected": True,
+                            }
+                        ],
+                        unit="kcal",
+                    )
+                },
+            }
+        },
+    }
+
+    summary = build_data_reliability_summary(diagnostics, local_day="2026-06-14")
+
+    active_calories = summary["metrics"]["active_calories"]
+    assert active_calories["status"] == "partial"
+    assert active_calories["confidence"] == "medium"
+    assert active_calories["badge_label"] == "A verifier"
+    assert active_calories["selected_source_label"] == "Android"
 
 
 def test_reliability_marks_missing_metric_without_implying_zero_behavior():
