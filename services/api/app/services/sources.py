@@ -23,6 +23,9 @@ DEFAULT_SOURCE_HINTS = {
     "nutrition": None,
 }
 
+STEP_CORRECTION_RATIO = 1.5
+CONFLICT_RATIO = 1.5
+
 DIAGNOSTIC_METRICS = {
     "activity": {
         "steps": {
@@ -172,6 +175,255 @@ def display_source(source: str | None) -> str:
     if value == "android":
         return "Android"
     return source
+
+
+def build_data_reliability_summary(diagnostics: dict, *, local_day: str | None = None) -> dict:
+    day = local_day or _diagnostic_local_day(diagnostics)
+    summaries = {}
+    for domain, domain_payload in (diagnostics.get("domains") or {}).items():
+        for metric_name, metric_payload in ((domain_payload or {}).get("metrics") or {}).items():
+            summaries[metric_name] = _metric_reliability_summary(
+                metric_name,
+                domain,
+                metric_payload or {},
+                day,
+            )
+    return {"generated_at": diagnostics.get("generated_at"), "metrics": summaries}
+
+
+def _metric_reliability_summary(
+    metric_name: str,
+    domain: str,
+    metric_payload: dict,
+    local_day: str | None,
+) -> dict:
+    metric = metric_payload.get("metric") or metric_name
+    unit = metric_payload.get("unit")
+    sources = [
+        _reliability_source(source_payload, unit)
+        for source_payload in metric_payload.get("sources") or []
+        if isinstance(source_payload, dict)
+    ]
+    selected = _selected_reliability_source(sources, metric_payload.get("selected_source"))
+    best = _best_reliability_source(sources)
+    retained = selected or best
+    retained_value = _source_value(retained)
+
+    if retained is None or retained_value is None:
+        return _missing_reliability_summary(metric, domain, unit, sources)
+
+    status = "measured"
+    confidence = "high"
+    badge_label = "Fiable"
+    conflict_source = None
+
+    if metric == "steps" and selected is not None and best is not None and best.get("source") != selected.get("source"):
+        selected_value = _source_value(selected)
+        best_value = _source_value(best)
+        if (
+            selected_value is not None
+            and best_value is not None
+            and ((selected_value <= 0 and best_value > 0) or best_value >= selected_value * STEP_CORRECTION_RATIO)
+        ):
+            retained = best
+            retained_value = best_value
+            status = "corrected"
+            confidence = "medium"
+            badge_label = "Corrige"
+
+    if status == "measured" and selected is not None and retained.get("source") == selected.get("source"):
+        conflict_source = _conflicting_source(sources, retained)
+        if conflict_source is not None:
+            status = "conflict"
+            confidence = "medium"
+            badge_label = "A verifier"
+
+    if status == "measured" and not _timestamp_matches_local_day(retained.get("latest_received_at"), local_day):
+        status = "partial"
+        confidence = "medium" if confidence == "high" else confidence
+        badge_label = "A verifier"
+
+    _annotate_reliability_sources(sources, retained, selected, status, conflict_source)
+    selected_label = retained.get("source_label") or display_source(retained.get("source"))
+    return {
+        "metric": metric,
+        "domain": metric_payload.get("domain") or domain,
+        "status": status,
+        "confidence": confidence,
+        "selected_source": retained.get("source"),
+        "selected_source_label": selected_label,
+        "selected_value": retained.get("value"),
+        "unit": unit,
+        "latest_received_at": retained.get("latest_received_at"),
+        "badge_label": badge_label,
+        "user_explanation": _reliability_user_explanation(metric, status, selected_label, local_day),
+        "coach_reason": _reliability_coach_reason(metric, status, selected_label, conflict_source, local_day),
+        "sources": sources,
+    }
+
+
+def _reliability_source(source_payload: dict, unit: str | None) -> dict:
+    source = source_payload.get("source")
+    return {
+        "source": source,
+        "source_label": source_payload.get("source_label") or display_source(source),
+        "value": source_payload.get("total"),
+        "unit": unit,
+        "latest_received_at": source_payload.get("latest_received_at"),
+        "selected": bool(source_payload.get("selected")),
+        "note": "",
+    }
+
+
+def _missing_reliability_summary(metric: str, domain: str, unit: str | None, sources: list[dict]) -> dict:
+    for source in sources:
+        source["selected"] = False
+        source["note"] = "Source disponible sans valeur exploitable"
+    return {
+        "metric": metric,
+        "domain": domain,
+        "status": "missing",
+        "confidence": "low",
+        "selected_source": None,
+        "selected_source_label": "Auto",
+        "selected_value": None,
+        "unit": unit,
+        "latest_received_at": None,
+        "badge_label": "A verifier",
+        "user_explanation": f"Donnee {metric} pas recue par les sources connectees.",
+        "coach_reason": (
+            "Une donnee manquante ne signifie pas que l'utilisateur n'a pas produit ce comportement; "
+            "elle indique seulement que la source ne l'a pas transmis."
+        ),
+        "sources": sources,
+    }
+
+
+def _selected_reliability_source(sources: list[dict], selected_source: str | None) -> dict | None:
+    selected = next((source for source in sources if source.get("selected")), None)
+    if selected is not None:
+        return selected
+    if selected_source:
+        return next((source for source in sources if source.get("source") == selected_source), None)
+    return None
+
+
+def _best_reliability_source(sources: list[dict]) -> dict | None:
+    candidates = [source for source in sources if _source_value(source) is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda source: (_source_value(source) or 0.0, str(source.get("source") or "")))
+
+
+def _conflicting_source(sources: list[dict], retained: dict) -> dict | None:
+    retained_value = _source_value(retained)
+    if retained_value is None:
+        return None
+    for source in sources:
+        if source.get("source") == retained.get("source"):
+            continue
+        value = _source_value(source)
+        if value is None:
+            continue
+        if _values_conflict(retained_value, value):
+            return source
+    return None
+
+
+def _values_conflict(left: float, right: float) -> bool:
+    larger = max(left, right)
+    smaller = min(left, right)
+    if smaller <= 0:
+        return larger > 0
+    return larger >= smaller * CONFLICT_RATIO
+
+
+def _source_value(source: dict | None) -> float | None:
+    if not source:
+        return None
+    value = source.get("value")
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _annotate_reliability_sources(
+    sources: list[dict],
+    retained: dict,
+    selected: dict | None,
+    status: str,
+    conflict_source: dict | None,
+) -> None:
+    retained_source = retained.get("source")
+    selected_source = selected.get("source") if selected else None
+    conflict_source_name = conflict_source.get("source") if conflict_source else None
+    for source in sources:
+        source_name = source.get("source")
+        source["selected"] = source_name == retained_source
+        if status == "corrected" and source_name == selected_source and source_name != retained_source:
+            source["note"] = "Source retenue semblait partielle"
+        elif status == "corrected" and source_name == retained_source:
+            source["note"] = "Source retenue apres correction"
+        elif status == "conflict" and source_name == conflict_source_name:
+            source["note"] = "Ecart important avec la source retenue"
+        elif status == "partial" and source_name == retained_source:
+            source["note"] = "Derniere reception hors de la journee locale"
+        elif source_name == retained_source:
+            source["note"] = "Source retenue"
+        else:
+            source["note"] = "Source disponible"
+
+
+def _reliability_user_explanation(metric: str, status: str, source_label: str, local_day: str | None) -> str:
+    if status == "corrected":
+        return f"Donnee {metric} ajustee avec {source_label}, la source la plus complete disponible."
+    if status == "conflict":
+        return f"Donnee {metric} a verifier: {source_label} differe fortement d'une autre source."
+    if status == "partial":
+        day_text = f" pour {local_day}" if local_day else ""
+        return f"Donnee {metric} partielle: derniere reception {source_label} hors de la journee locale{day_text}."
+    return f"Donnee {metric} recue depuis {source_label}."
+
+
+def _reliability_coach_reason(
+    metric: str,
+    status: str,
+    source_label: str,
+    conflict_source: dict | None,
+    local_day: str | None,
+) -> str:
+    if status == "corrected":
+        return f"La source retenue semblait partielle; {source_label} presente une valeur plus complete pour {metric}."
+    if status == "conflict":
+        conflict_label = (conflict_source or {}).get("source_label") or "une autre source"
+        return (
+            f"{source_label} reste la source retenue, mais {conflict_label} presente un ecart "
+            "d'au moins 50%; a verifier avant interpretation."
+        )
+    if status == "partial":
+        day_text = f" {local_day}" if local_day else " la journee locale"
+        return f"La valeur existe, mais son horodatage n'est pas sur{day_text} en Europe/Paris; lire cette donnee comme partielle."
+    return f"{source_label} est la source retenue pour {metric}; aucune incoherence majeure n'est detectee."
+
+
+def _diagnostic_local_day(diagnostics: dict) -> str | None:
+    generated_at = parse_iso(diagnostics.get("generated_at"))
+    if generated_at is None:
+        return None
+    return generated_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Europe/Paris")).date().isoformat()
+
+
+def _timestamp_matches_local_day(timestamp: str | None, local_day: str | None) -> bool:
+    if not local_day:
+        return True
+    received_at = parse_iso(timestamp)
+    if received_at is None:
+        return False
+    received_day = received_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Europe/Paris")).date().isoformat()
+    return received_day == local_day
 
 
 class SourceConfigService:
