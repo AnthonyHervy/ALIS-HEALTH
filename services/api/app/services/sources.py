@@ -206,7 +206,13 @@ def _metric_reliability_summary(
     ]
     selected = _selected_reliability_source(sources, metric_payload.get("selected_source"))
     best = _best_reliability_source(sources)
-    retained = selected or best
+    fresh_best = _best_reliability_source(sources, local_day)
+    if _source_value(selected) is not None:
+        retained = selected
+    elif fresh_best is not None:
+        retained = fresh_best
+    else:
+        retained = best if selected is None else None
     retained_value = _source_value(retained)
 
     if retained is None or retained_value is None:
@@ -217,22 +223,27 @@ def _metric_reliability_summary(
     badge_label = "Fiable"
     conflict_source = None
 
-    if metric == "steps" and selected is not None and best is not None and best.get("source") != selected.get("source"):
+    if (
+        metric == "steps"
+        and selected is not None
+        and fresh_best is not None
+        and fresh_best.get("source") != selected.get("source")
+    ):
         selected_value = _source_value(selected)
-        best_value = _source_value(best)
+        best_value = _source_value(fresh_best)
         if (
             selected_value is not None
             and best_value is not None
             and ((selected_value <= 0 and best_value > 0) or best_value >= selected_value * STEP_CORRECTION_RATIO)
         ):
-            retained = best
+            retained = fresh_best
             retained_value = best_value
             status = "corrected"
             confidence = "medium"
             badge_label = "Corrige"
 
     if status == "measured" and selected is not None and retained.get("source") == selected.get("source"):
-        conflict_source = _conflicting_source(sources, retained)
+        conflict_source = _conflicting_source(sources, retained, local_day)
         if conflict_source is not None:
             status = "conflict"
             confidence = "medium"
@@ -308,19 +319,26 @@ def _selected_reliability_source(sources: list[dict], selected_source: str | Non
     return None
 
 
-def _best_reliability_source(sources: list[dict]) -> dict | None:
-    candidates = [source for source in sources if _source_value(source) is not None]
+def _best_reliability_source(sources: list[dict], local_day: str | None = None) -> dict | None:
+    candidates = [
+        source
+        for source in sources
+        if _source_value(source) is not None
+        and _timestamp_matches_local_day(source.get("latest_received_at"), local_day)
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda source: (_source_value(source) or 0.0, str(source.get("source") or "")))
 
 
-def _conflicting_source(sources: list[dict], retained: dict) -> dict | None:
+def _conflicting_source(sources: list[dict], retained: dict, local_day: str | None = None) -> dict | None:
     retained_value = _source_value(retained)
     if retained_value is None:
         return None
     for source in sources:
         if source.get("source") == retained.get("source"):
+            continue
+        if not _timestamp_matches_local_day(source.get("latest_received_at"), local_day):
             continue
         value = _source_value(source)
         if value is None:

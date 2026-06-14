@@ -186,6 +186,129 @@ def test_reliability_marks_step_fallback_as_corrected_when_best_source_is_1_5x_h
     assert "source retenue semblait partielle" in steps["coach_reason"]
 
 
+def test_reliability_ignores_stale_alternate_sources_for_daily_decisions():
+    diagnostics = {
+        "generated_at": "2026-06-14T12:00:00+00:00",
+        "domains": {
+            "activity": {
+                "selected_source": "android",
+                "selected_source_label": "Android",
+                "metrics": {
+                    "steps": metric(
+                        "steps",
+                        selected_source="android",
+                        selected_label="Android",
+                        selected_value=6000,
+                        sources=[
+                            {
+                                "source": "android",
+                                "source_label": "Android",
+                                "total": 6000,
+                                "records": 1,
+                                "latest_received_at": "2026-06-14T08:00:00+00:00",
+                                "selected": True,
+                            },
+                            {
+                                "source": "com.garmin.android.apps.connectmobile",
+                                "source_label": "Garmin",
+                                "total": 15000,
+                                "records": 3,
+                                "latest_received_at": "2026-06-13T12:00:00+00:00",
+                                "selected": False,
+                            },
+                        ],
+                    ),
+                    "active_calories": metric(
+                        "active_calories",
+                        selected_source="android",
+                        selected_label="Android",
+                        selected_value=400,
+                        sources=[
+                            {
+                                "source": "android",
+                                "source_label": "Android",
+                                "total": 400,
+                                "records": 1,
+                                "latest_received_at": "2026-06-14T08:00:00+00:00",
+                                "selected": True,
+                            },
+                            {
+                                "source": "com.garmin.android.apps.connectmobile",
+                                "source_label": "Garmin",
+                                "total": 900,
+                                "records": 3,
+                                "latest_received_at": "2026-06-13T12:00:00+00:00",
+                                "selected": False,
+                            },
+                        ],
+                        unit="kcal",
+                    ),
+                },
+            }
+        },
+    }
+
+    summary = build_data_reliability_summary(diagnostics, local_day="2026-06-14")
+
+    steps = summary["metrics"]["steps"]
+    assert steps["status"] == "measured"
+    assert steps["confidence"] == "high"
+    assert steps["selected_source_label"] == "Android"
+    assert steps["selected_value"] == 6000
+    garmin_steps = next(source for source in steps["sources"] if source["source_label"] == "Garmin")
+    assert garmin_steps["selected"] is False
+
+    active_calories = summary["metrics"]["active_calories"]
+    assert active_calories["status"] == "measured"
+    assert active_calories["confidence"] == "high"
+    assert active_calories["selected_source_label"] == "Android"
+
+
+def test_reliability_falls_back_when_selected_source_value_is_invalid():
+    diagnostics = {
+        "generated_at": "2026-06-14T12:00:00+00:00",
+        "domains": {
+            "activity": {
+                "selected_source": "android",
+                "selected_source_label": "Android",
+                "metrics": {
+                    "steps": metric(
+                        "steps",
+                        selected_source="android",
+                        selected_label="Android",
+                        selected_value=None,
+                        sources=[
+                            {
+                                "source": "android",
+                                "source_label": "Android",
+                                "total": None,
+                                "records": 1,
+                                "latest_received_at": "2026-06-14T08:00:00+00:00",
+                                "selected": True,
+                            },
+                            {
+                                "source": "com.garmin.android.apps.connectmobile",
+                                "source_label": "Garmin",
+                                "total": 9000,
+                                "records": 3,
+                                "latest_received_at": "2026-06-14T12:00:00+00:00",
+                                "selected": False,
+                            },
+                        ],
+                    )
+                },
+            }
+        },
+    }
+
+    summary = build_data_reliability_summary(diagnostics, local_day="2026-06-14")
+
+    steps = summary["metrics"]["steps"]
+    assert steps["status"] != "missing"
+    assert steps["selected_source_label"] == "Garmin"
+    assert steps["selected_value"] == 9000
+
+
 def test_reliability_marks_missing_metric_without_implying_zero_behavior():
     diagnostics = {
         "generated_at": "2026-06-14T12:00:00+00:00",
