@@ -79,3 +79,32 @@ class AuthService:
         device_token.revoked = True
         device_token.revoked_at = datetime.utcnow()
         await self.db.commit()
+
+    async def rotate_token(self, token: str, user_id: str) -> tuple[str, str]:
+        token_hash = hash_token(self.settings.secret_key, token)
+        result = await self.db.execute(
+            select(HealthDeviceToken).where(
+                HealthDeviceToken.token_hash == token_hash,
+                HealthDeviceToken.user_id == user_id,
+                HealthDeviceToken.revoked.is_(False),
+            )
+        )
+        device_token = result.scalar_one_or_none()
+        if device_token is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid device token",
+            )
+
+        device_token.revoked = True
+        device_token.revoked_at = datetime.utcnow()
+        replacement = secrets.token_urlsafe(32)
+        self.db.add(
+            HealthDeviceToken(
+                user_id=user_id,
+                token_hash=hash_token(self.settings.secret_key, replacement),
+                device_name=device_token.device_name,
+            )
+        )
+        await self.db.commit()
+        return user_id, replacement

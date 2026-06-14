@@ -5,11 +5,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "HealthConnect API"
     api_v1_prefix: str = "/api/v1"
-    database_url: str = "sqlite+aiosqlite:///./alis-dev.db"
-    secret_key: str = Field(default="local-development-secret-only", min_length=8)
-    pairing_code: str = ""
+    database_url: str = "postgresql+asyncpg://health:health_secret@db:5432/healthconnect"
+    secret_key: str = Field(default="change-me-in-production", min_length=8)
+    pairing_code: str = "change-me-pairing-code"
     debug: bool = False
     cors_allowed_origins: list[str] = ["http://localhost:5173"]
+    api_rate_limit_per_minute: int = 120
+    api_rate_limit_window_seconds: int = 60
     health_llm_provider: str = "ollama"
     health_llm_base_url: str = "http://host.docker.internal:11434"
     health_llm_model: str = "gpt-oss:20b"

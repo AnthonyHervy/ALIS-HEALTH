@@ -521,6 +521,51 @@ async def test_context_uses_domain_sources_and_deduplicates_multisource_data(tes
 
 
 @pytest.mark.asyncio
+async def test_dashboard_exposes_health_connect_source_diagnostics(test_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        await client.post("/api/v1/ingest/health", json=multisource_batch(), headers=headers)
+        await client.put(
+            "/api/v1/config/source-preferences",
+            json={"preferences": {"activity": "com.garmin.android.apps.connectmobile"}},
+            headers=headers,
+        )
+        dashboard = await client.post("/api/v1/context/dashboard/refresh", headers=headers)
+
+    assert dashboard.status_code == 200
+    diagnostics = dashboard.json()["source_diagnostics"]
+    steps = diagnostics["domains"]["activity"]["metrics"]["steps"]
+
+    assert steps["selected_source"] == "com.garmin.android.apps.connectmobile"
+    assert steps["selected_source_label"] == "Garmin"
+    assert steps["selected_value"] == 17334
+    assert steps["latest_received_at"].startswith("2026-05-19T20:00:00")
+    assert steps["status"] == "received"
+
+    by_label = {item["source_label"]: item for item in steps["sources"]}
+    assert by_label["Garmin"]["total"] == 17334
+    assert by_label["Garmin"]["records"] == 1
+    assert by_label["Garmin"]["selected"] is True
+    assert by_label["Google Fit"]["total"] == 13016
+    assert by_label["Google Fit"]["selected"] is False
+    assert by_label["Android"]["total"] == 20204
+    assert by_label["Android"]["selected"] is False
+
+    hrv = diagnostics["domains"]["biometrics"]["metrics"]["hrv"]
+    assert hrv["status"] == "not_received"
+    assert hrv["selected_value"] is None
+
+
+@pytest.mark.asyncio
 async def test_context_estimates_steps_and_workout_distance_when_steps_are_missing(test_app):
     async with AsyncClient(
         transport=ASGITransport(app=test_app),
@@ -902,6 +947,13 @@ async def test_dashboard_context_bundles_windows_sync_and_sources(test_app):
     assert payload["latest_sync_run"]["status"] == "success"
     assert payload["sync_summary"]["total_runs"] == 1
     assert "detected_sources" in payload["source_config"]
+    assert payload["snapshot_version"] == "2026-06-14.1"
+    assert payload["snapshot_status"] == "fresh"
+    assert payload["snapshot_freshness"]["status"] == "fresh"
+    assert payload["snapshot_freshness"]["source_sync_run_id"] == payload["latest_sync_run"]["id"]
+    assert payload["coach_summary"]["version"] == "2026-06-14.1"
+    assert payload["coach_summary"]["windows"]["last_24h"]["sleep_minutes"] > 0
+    assert payload["coach_summary"]["source_reliability"]["activity"]["status"] in {"received", "not_received"}
     assert payload["generated_at"]
     assert payload["computed_at"]
     assert payload["is_stale"] is False
@@ -1204,6 +1256,69 @@ async def test_daily_activity_sums_incremental_normalized_steps_without_duplicat
     series = {day["date"]: day for day in response.json()["series"]}
     assert series["2026-06-06"]["steps"] == 5287
     assert response.json()["activity"]["steps"] == 5287
+
+
+@pytest.mark.asyncio
+async def test_daily_activity_recovers_best_normalized_steps_when_effective_source_lags(test_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        batch = {
+            "source_type": "healthconnect",
+            "device_name": "Pixel Test",
+            "device_id": "pixel-test-1",
+            "data_start": "2026-06-14T00:00:00+00:00",
+            "data_end": "2026-06-14T18:00:00+00:00",
+            "steps": [
+                {
+                    "start_time": "2026-06-14T08:00:00+00:00",
+                    "end_time": "2026-06-14T18:00:00+00:00",
+                    "count": 6371,
+                    "metadata": {"dataOrigin": "com.garmin.android.apps.connectmobile", "id": "garmin-steps"},
+                },
+                {
+                    "start_time": "2026-06-14T08:00:00+00:00",
+                    "end_time": "2026-06-14T18:00:00+00:00",
+                    "count": 12362,
+                    "metadata": {"dataOrigin": "com.google.android.apps.fitness", "id": "google-steps"},
+                },
+                {
+                    "start_time": "2026-06-14T08:00:00+00:00",
+                    "end_time": "2026-06-14T18:00:00+00:00",
+                    "count": 16843,
+                    "metadata": {"dataOrigin": "com.android.healthconnect.phone.example", "id": "healthconnect-steps"},
+                },
+            ],
+            "raw_records": {
+                "Steps": [
+                    {
+                        "startTime": "2026-06-14T08:00:00+00:00",
+                        "endTime": "2026-06-14T18:00:00+00:00",
+                        "count": 84,
+                        "metadata": {"dataOrigin": "com.google.android.apps.fitness", "id": "raw-google-steps"},
+                    }
+                ]
+            },
+        }
+
+        ingested = await client.post("/api/v1/ingest/health", json=batch, headers=headers)
+        response = await client.get("/api/v1/context/overview?window=24h", headers=headers)
+
+    assert ingested.status_code == 200
+    assert response.status_code == 200
+    series = {day["date"]: day for day in response.json()["series"]}
+    assert series["2026-06-14"]["steps"] == 16843
+    assert series["2026-06-14"]["steps_recovered"] is True
+    assert response.json()["activity"]["source"] == "com.android.healthconnect.phone.example"
+    assert response.json()["activity"]["steps"] == 16843
 
 
 @pytest.mark.asyncio

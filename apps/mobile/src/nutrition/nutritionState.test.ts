@@ -41,6 +41,8 @@ test('formats meal statuses for the journal', () => {
   expect(mealStatusLabel('needs_review')).toBe('À revoir');
   expect(mealStatusLabel('validated')).toBe('Validé');
   expect(mealStatusLabel('error')).toBe('Erreur');
+  expect(mealStatusLabel('analyzing', 'en')).toBe('Analyzing');
+  expect(mealStatusLabel('ready', 'en')).toBe('Ready to validate');
 });
 
 test('labels the next action for each meal state', () => {
@@ -55,6 +57,9 @@ test('labels the next action for each meal state', () => {
   expect(mealNextActionLabel({ id: 'analyzing', status: 'analyzing' } as NutritionMeal)).toBe('Analyse en cours');
   expect(mealNextActionLabel({ id: 'draft', status: 'draft' } as NutritionMeal)).toBe('Analyse en cours');
   expect(mealNextActionLabel({ id: 'unknown', status: 'archived' } as unknown as NutritionMeal)).toBe('Analyse en cours');
+  expect(mealNextActionLabel({ id: 'blocked-en', status: 'ready', validation_blocked: true } as NutritionMeal, 'en')).toBe(
+    'Correction required before validation'
+  );
 });
 
 test('detects newly ready meals for local notifications', () => {
@@ -125,6 +130,8 @@ test('groups the journal into daily sections with validated kcal and meals to re
   });
   expect(sections[0].meals.map((meal) => meal.id)).toEqual(['review-today', 'validated-today']);
   expect(sections[1]).toMatchObject({ title: '30/05/2026', validatedKcal: 0, pendingCount: 1 });
+
+  expect(buildJournalDaySections(meals, new Date('2026-05-31T20:00:00.000Z'), 'en')[0].title).toBe('Today');
 });
 
 test('explains confidence with the most actionable reason first', () => {
@@ -137,6 +144,7 @@ test('explains confidence with the most actionable reason first', () => {
   } as NutritionMeal;
 
   expect(confidenceInsight(meal)).toBe('Confiance basse · source nutritionnelle manquante');
+  expect(confidenceInsight(meal, 'en')).toBe('Low confidence · missing nutrition source');
 });
 
 test('builds analysis stage rows for upload, vision, sources and validation', () => {
@@ -157,6 +165,20 @@ test('builds analysis stage rows for upload, vision, sources and validation', ()
     { label: 'IA vision', state: 'OK', detail: 'analyse terminée' },
     { label: 'Sources', state: 'À corriger', detail: '1 aliment sans source' },
     { label: 'Validation', state: 'Bloquée', detail: 'corrige les sources avant ALIS' }
+  ]);
+
+  expect(analysisStageRows({
+    id: 'meal-1',
+    status: 'needs_review',
+    photo_count: 2,
+    analysis_job: { id: 'job-1', status: 'completed', attempts: 1 },
+    validation_blocked: true,
+    items: [{ id: 'item-1', name: 'Sauce', included: true, source: null, portion_g: 40 }]
+  } as NutritionMeal, 'en')).toEqual([
+    { label: 'Photos', state: 'OK', detail: '2 photo(s) received' },
+    { label: 'Vision AI', state: 'OK', detail: 'analysis complete' },
+    { label: 'Sources', state: 'To fix', detail: '1 food item without source' },
+    { label: 'Validation', state: 'Blocked', detail: 'fix sources before ALIS' }
   ]);
 });
 

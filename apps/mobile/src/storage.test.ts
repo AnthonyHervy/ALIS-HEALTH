@@ -36,6 +36,15 @@ test('persists morning notification preference', async () => {
   }));
 });
 
+test('persists the preferred ALIS language', async () => {
+  await saveSettings({ language: 'en' });
+
+  expect(secureStoreValues.get('alis.language')).toBe('en');
+  await expect(loadSettings()).resolves.toEqual(expect.objectContaining({
+    language: 'en'
+  }));
+});
+
 test('persists the unified ALIS device settings', async () => {
   await saveSettings({
     apiBaseUrl: 'http://alis.local:8010',
@@ -83,7 +92,7 @@ test('persists the last workout notification key', async () => {
 
 test('persists the user profile used by coach context', async () => {
   await saveUserProfile({
-    firstName: 'Alex',
+    firstName: 'Anthony',
     sex: 'male',
     age: '36',
     weightKg: '82',
@@ -91,14 +100,14 @@ test('persists the user profile used by coach context', async () => {
   });
 
   expect(secureStoreValues.get('alis.userProfile')).toBe(JSON.stringify({
-    firstName: 'Alex',
+    firstName: 'Anthony',
     sex: 'male',
     age: '36',
     weightKg: '82',
     heightCm: '181'
   }));
   await expect(loadUserProfile()).resolves.toEqual({
-    firstName: 'Alex',
+    firstName: 'Anthony',
     sex: 'male',
     age: '36',
     weightKg: '82',

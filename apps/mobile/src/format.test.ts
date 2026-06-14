@@ -8,8 +8,10 @@ test('formats durations and Paris timestamps', () => {
 
 test('formats dashboard labels and values', () => {
   expect(formatDailyValue(18436, 'pas')).toBe('18,4 k pas');
+  expect(formatDailyValue(18436, 'steps')).toBe('18.4K steps');
   expect(formatDailyValue(375, 'sleep')).toBe('6 h 15');
   expect(formatActivityLabel('strength_training')).toBe('Renforcement Musculaire');
+  expect(formatActivityLabel('strength_training', 'en')).toBe('Strength training');
   expect(formatActivityLabel('cycling')).toBe('RPM');
   expect(activityIcon('rowing')).toBe('Rame');
   expect(sleepTone(375)).toBe('warning');
@@ -79,4 +81,23 @@ test('formats sync observability with background next run and latest error', () 
   expect(summary.nextBackground).toContain('10:59');
   expect(summary.latestError).toBe('Network request failed');
   expect(summary.records).toBe('46 637 enregistrements');
+});
+
+test('formats sync observability in English', () => {
+  const summary = formatSyncObservability({
+    total_runs: 3,
+    success_runs: 2,
+    error_runs: 1,
+    duplicate_runs: 0,
+    records_received: 46637,
+    last_success_at: '2026-05-31T07:59:00Z',
+    last_manual_at: null,
+    last_background_at: null,
+    latest_network_type: 'wifi',
+    recent_runs: []
+  }, 'en');
+
+  expect(summary.latestError).toBe('No recent error');
+  expect(summary.records).toBe('46,637 records');
+  expect(summary.runs).toBe('3 run(s) · 2 success · 1 error(s)');
 });

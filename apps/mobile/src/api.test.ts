@@ -6,7 +6,8 @@ function settings(token: string | null = null): Settings {
     apiBaseUrl: 'http://health.local:8010',
     pairingCode: 'pair-code',
     deviceToken: token,
-    notificationsEnabled: false
+    notificationsEnabled: false,
+    language: 'system'
   };
 }
 
@@ -66,6 +67,24 @@ test('refreshes dashboard through refresh endpoint', async () => {
   await client.fetchDashboard(settings('token'), jest.fn(), { refresh: true });
 
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/context/dashboard/refresh'), expect.objectContaining({ method: 'POST' }));
+});
+
+test('sends the resolved ALIS language with dashboard requests', async () => {
+  const fetchMock = jest.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ generated_at: 'now', windows: {}, latest_sync_run: null, sync_summary: {}, source_config: {} })
+  }));
+  const client = createAlisApiClient({ fetchImpl: fetchMock as any });
+
+  await client.fetchDashboard(settings('token'), jest.fn(), { language: 'en' });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/context/dashboard'),
+    expect.objectContaining({
+      headers: expect.objectContaining({ 'Accept-Language': 'en' })
+    })
+  );
 });
 
 test('normalizes dashboard API base URLs before fetching', async () => {
@@ -225,4 +244,39 @@ test('uses ALIS language for coach stream API errors', async () => {
       onDelta: jest.fn()
     })
   ).rejects.toThrow('ALIS Coach API 503');
+});
+
+test('sends the resolved ALIS language with coach stream requests', async () => {
+  const fetchMock = jest.fn(async (url: string) => {
+    if (url.endsWith('/coach/chat/stream')) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => 'event: delta\ndata: {"text":"OK"}\n\n'
+      };
+    }
+    throw new Error(url);
+  });
+  const client = createAlisApiClient({ fetchImpl: fetchMock as any });
+
+  await client.streamCoachChat({
+    settings: settings('token'),
+    save: jest.fn(),
+    message: 'How am I doing?',
+    history: [],
+    language: 'en',
+    onDelta: jest.fn()
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/coach/chat/stream'),
+    expect.objectContaining({
+      headers: expect.objectContaining({ 'Accept-Language': 'en' }),
+      body: JSON.stringify({ message: 'How am I doing?', mode: 'coach', history: [], language: 'en' })
+    })
+  );
+});
+
+test('localizes empty coach stream error events in English', () => {
+  expect(() => parseSseText('event: error\ndata: {}\n\n', 'en')).toThrow('AI Coach error');
 });

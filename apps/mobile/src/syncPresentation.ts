@@ -1,4 +1,5 @@
 import { formatParisDateTime, formatParisTime, parseServerTimestamp } from './format';
+import type { AppLanguage } from './i18n';
 import type { SyncRun } from './types';
 
 type HealthSyncSummary = {
@@ -14,12 +15,14 @@ export function healthSyncSummary({
   lastHealthSyncAt,
   latestRun,
   lastBackgroundStatus,
+  language = 'fr',
   now = new Date()
 }: {
   syncing: boolean;
   lastHealthSyncAt: string | null;
   latestRun: SyncRun | null;
   lastBackgroundStatus: string | null;
+  language?: AppLanguage;
   now?: Date;
 }): HealthSyncSummary {
   void latestRun;
@@ -27,45 +30,45 @@ export function healthSyncSummary({
 
   if (syncing) {
     return {
-      title: 'Synchronisation en cours',
-      detail: 'Lecture des données santé et envoi vers ALIS...',
-      action: 'Synchronisation...'
+      title: language === 'en' ? 'Sync in progress' : 'Synchronisation en cours',
+      detail: language === 'en' ? 'Reading health data and sending it to ALIS...' : 'Lecture des données santé et envoi vers ALIS...',
+      action: language === 'en' ? 'Syncing...' : 'Synchronisation...'
     };
   }
   if (!lastHealthSyncAt) {
     return {
-      title: 'Synchronisation initiale requise',
-      detail: 'Lance une synchronisation complète depuis ce téléphone.',
-      action: 'Synchroniser'
+      title: language === 'en' ? 'Initial sync required' : 'Synchronisation initiale requise',
+      detail: language === 'en' ? 'Run a full sync from this phone.' : 'Lance une synchronisation complète depuis ce téléphone.',
+      action: language === 'en' ? 'Sync' : 'Synchroniser'
     };
   }
-  const freshness = syncFreshness(lastHealthSyncAt, now);
+  const freshness = syncFreshness(lastHealthSyncAt, now, language);
   return {
-    title: 'Dernière synchronisation',
-    detail: formatSyncMoment(lastHealthSyncAt, now),
-    action: 'Synchroniser',
+    title: language === 'en' ? 'Last sync' : 'Dernière synchronisation',
+    detail: formatSyncMoment(lastHealthSyncAt, now, language),
+    action: language === 'en' ? 'Sync' : 'Synchroniser',
     freshnessTone: freshness.tone,
     freshnessLabel: freshness.label
   };
 }
 
-function formatSyncMoment(timestamp: string, now: Date) {
+function formatSyncMoment(timestamp: string, now: Date, language: AppLanguage) {
   const syncDate = parseServerTimestamp(timestamp);
   if (parisDateKey(syncDate) === parisDateKey(now)) {
-    return `Aujourd'hui à ${formatParisTime(timestamp)}`;
+    return language === 'en' ? `Today at ${formatParisTime(timestamp)}` : `Aujourd'hui à ${formatParisTime(timestamp)}`;
   }
   return formatParisDateTime(timestamp);
 }
 
-function syncFreshness(timestamp: string, now: Date): { tone: 'success' | 'warning' | 'danger'; label: string } {
+function syncFreshness(timestamp: string, now: Date, language: AppLanguage): { tone: 'success' | 'warning' | 'danger'; label: string } {
   const ageHours = Math.max(0, now.getTime() - parseServerTimestamp(timestamp).getTime()) / 36e5;
   if (ageHours < 6) {
-    return { tone: 'success', label: 'Données récentes' };
+    return { tone: 'success', label: language === 'en' ? 'Fresh data' : 'Données récentes' };
   }
   if (ageHours < 12) {
-    return { tone: 'warning', label: 'À resynchroniser bientôt' };
+    return { tone: 'warning', label: language === 'en' ? 'Sync soon' : 'À resynchroniser bientôt' };
   }
-  return { tone: 'danger', label: 'Synchronisation recommandée' };
+  return { tone: 'danger', label: language === 'en' ? 'Sync recommended' : 'Synchronisation recommandée' };
 }
 
 function parisDateKey(date: Date) {

@@ -76,6 +76,23 @@ test('schedules a daily 10:30 morning notification that opens today dashboard', 
   });
 });
 
+test('schedules the morning notification in English when requested', async () => {
+  const notifications = fakeNotifications();
+
+  await enableMorningNotification(notifications as any, 'android', 'en');
+
+  expect(notifications.setNotificationChannelAsync).toHaveBeenCalledWith('daily-health', expect.objectContaining({
+    name: 'Health reminders',
+    importance: 'high'
+  }));
+  expect(notifications.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
+    content: expect.objectContaining({
+      title: 'Good morning!',
+      body: 'Review today’s health data'
+    })
+  }));
+});
+
 test('does not schedule the morning notification when permission is denied', async () => {
   const notifications = fakeNotifications('denied');
 
@@ -120,6 +137,23 @@ test('schedules a workout analysis notification that opens the coach', async () 
     }),
     trigger: null
   });
+});
+
+test('schedules a workout analysis notification in English when requested', async () => {
+  const notifications = fakeNotifications();
+
+  await scheduleWorkoutAnalysisNotification(workout(), notifications as any, 'android', 'en');
+
+  expect(notifications.setNotificationChannelAsync).toHaveBeenCalledWith('workout-analysis', expect.objectContaining({
+    name: 'Workout analyses',
+    importance: 'high'
+  }));
+  expect(notifications.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
+    content: expect.objectContaining({
+      title: 'Nice work on this RUN!',
+      body: 'Open my analysis'
+    })
+  }));
 });
 
 test('clears stale workout analysis notifications', async () => {

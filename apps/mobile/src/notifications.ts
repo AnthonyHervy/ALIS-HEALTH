@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 
+import type { AppLanguage } from './i18n';
 import type { WorkoutHistoryItem } from './types';
 import { workoutKey, workoutNotificationCopy } from './workoutCoach';
 
@@ -26,11 +27,12 @@ export type MorningNotificationResult = {
 
 export async function enableMorningNotification(
   notifications: NotificationModule = Notifications,
-  platform: string = 'android'
+  platform: string = 'android',
+  language: AppLanguage = 'fr'
 ): Promise<MorningNotificationResult> {
   if (platform === 'android') {
     await notifications.setNotificationChannelAsync(MORNING_NOTIFICATION_CHANNEL_ID, {
-      name: 'Rappels santé',
+      name: language === 'en' ? 'Health reminders' : 'Rappels santé',
       importance: notifications.AndroidImportance.HIGH
     });
   }
@@ -48,8 +50,8 @@ export async function enableMorningNotification(
   await notifications.scheduleNotificationAsync({
     identifier: MORNING_NOTIFICATION_ID,
     content: {
-      title: 'Bonjour !',
-      body: 'Consultez vos données santé du jour',
+      title: language === 'en' ? 'Good morning!' : 'Bonjour !',
+      body: language === 'en' ? 'Review today’s health data' : 'Consultez vos données santé du jour',
       data: { target: 'dashboard', window: '24h' }
     },
     trigger: {
@@ -88,16 +90,17 @@ export function addMorningNotificationResponseListener(
 export async function scheduleWorkoutAnalysisNotification(
   workout: WorkoutHistoryItem,
   notifications: NotificationModule = Notifications,
-  platform: string = 'android'
+  platform: string = 'android',
+  language: AppLanguage = 'fr'
 ): Promise<void> {
   if (platform === 'android') {
     await notifications.setNotificationChannelAsync(WORKOUT_ANALYSIS_NOTIFICATION_CHANNEL_ID, {
-      name: 'Analyses entraînement',
+      name: language === 'en' ? 'Workout analyses' : 'Analyses entraînement',
       importance: notifications.AndroidImportance.HIGH
     });
   }
 
-  const copy = workoutNotificationCopy(workout);
+  const copy = workoutNotificationCopy(workout, language);
   if (!copy) {
     return;
   }

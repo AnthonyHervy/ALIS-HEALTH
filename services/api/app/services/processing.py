@@ -8,6 +8,8 @@ from app.schemas import SyncRunResponse
 from app.services.context import HealthContextService
 from app.services.sources import SourceConfigService
 
+DASHBOARD_SNAPSHOT_VERSION = "2026-06-14.1"
+
 
 class ProcessingService:
     def __init__(self, db: AsyncSession):
@@ -83,11 +85,24 @@ class ProcessingService:
             "week": await context.overview(user_id, "7d"),
             "month": await context.overview(user_id, "30d"),
         }
+        source_config = await source_service.config(user_id)
+        source_diagnostics = await source_service.diagnostics(user_id, source_config)
+        generated_at = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
         payload = {
-            "generated_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+            "snapshot_version": DASHBOARD_SNAPSHOT_VERSION,
+            "snapshot_status": "fresh",
+            "snapshot_freshness": {
+                "status": "fresh",
+                "source_sync_run_id": source_sync_run_id,
+                "computed_at": generated_at,
+                "is_stale": False,
+            },
+            "generated_at": generated_at,
             "windows": windows,
             "morning_context": context.morning_context(windows),
-            "source_config": await source_service.config(user_id),
+            "source_config": source_config,
+            "source_diagnostics": source_diagnostics,
+            "coach_summary": self._coach_summary(windows, source_diagnostics, generated_at),
         }
         snapshot = await self.latest_dashboard_snapshot(user_id)
         computed_at = datetime.utcnow()
@@ -116,13 +131,89 @@ class ProcessingService:
         payload = dict(snapshot.payload)
         if "morning_context" not in payload and "windows" in payload:
             payload["morning_context"] = HealthContextService(self.db).morning_context(payload["windows"])
+        payload.setdefault("snapshot_version", DASHBOARD_SNAPSHOT_VERSION)
         payload["computed_at"] = snapshot.computed_at.replace(tzinfo=timezone.utc).isoformat()
         payload["source_sync_run_id"] = snapshot.source_sync_run_id
         payload["is_stale"] = bool(latest and snapshot.source_sync_run_id != latest.id)
+        payload["snapshot_status"] = "stale" if payload["is_stale"] else "fresh"
+        payload["snapshot_freshness"] = {
+            "status": payload["snapshot_status"],
+            "computed_at": payload["computed_at"],
+            "source_sync_run_id": snapshot.source_sync_run_id,
+            "latest_sync_run_id": latest.id if latest else None,
+            "is_stale": payload["is_stale"],
+        }
         payload["latest_sync_run"] = latest_payload
         payload["sync_summary"] = summary.model_dump(mode="json")
         payload["data_status"] = self._data_status(payload, latest_payload, payload["sync_summary"])
         return payload
+
+    def _coach_summary(self, windows: dict, source_diagnostics: dict, generated_at: str) -> dict:
+        return {
+            "version": DASHBOARD_SNAPSHOT_VERSION,
+            "generated_at": generated_at,
+            "windows": {
+                "last_24h": self._coach_window_summary(windows.get("last_24h") or {}, "24h"),
+                "week": self._coach_window_summary(windows.get("week") or {}, "7j"),
+                "month": self._coach_window_summary(windows.get("month") or {}, "30j"),
+            },
+            "source_reliability": self._coach_source_reliability(source_diagnostics),
+            "data_limitations": [
+                "Les scores ALIS sont des aides a la lecture, pas des diagnostics medicaux.",
+                "Une donnee absente signifie non recue ou non validee, pas absence de comportement.",
+            ],
+        }
+
+    def _coach_window_summary(self, window: dict, label: str) -> dict:
+        activity = window.get("activity") or {}
+        sleep = window.get("sleep") or {}
+        workouts = window.get("workouts") or {}
+        nutrition = window.get("nutrition") or {}
+        biometrics = window.get("biometrics") or {}
+        scores = {
+            item.get("slug"): item.get("value")
+            for item in ((window.get("life_balance_scores") or {}).get("scores") or [])
+        }
+        return {
+            "label": label,
+            "window": window.get("window"),
+            "sleep_minutes": int(sleep.get("average_duration_minutes") or sleep.get("total_duration_minutes") or 0),
+            "sleep_sessions": int(sleep.get("sessions") or 0),
+            "steps": int(activity.get("steps") or 0),
+            "average_daily_steps": int(activity.get("average_daily_steps") or 0),
+            "active_calories_kcal": round(float(activity.get("active_calories_kcal") or 0), 1),
+            "workout_sessions": int(workouts.get("sessions") or 0),
+            "workout_minutes": int(workouts.get("duration_minutes") or 0),
+            "running_distance_meters": round(float(workouts.get("running_distance_meters") or 0), 1),
+            "nutrition_meals": int(nutrition.get("meals") or 0),
+            "nutrition_energy_kcal": round(float(nutrition.get("energy_kcal") or 0), 1),
+            "hydration_liters": round(float(nutrition.get("hydration_liters") or 0), 2),
+            "heart_rate_records": int(biometrics.get("heart_rate_records") or 0),
+            "heart_rate_min_bpm": round(float(biometrics.get("heart_rate_min_bpm") or 0), 1),
+            "heart_rate_max_bpm": round(float(biometrics.get("heart_rate_max_bpm") or 0), 1),
+            "hrv_rmssd_ms": round(float(biometrics.get("hrv_rmssd_ms") or 0), 1),
+            "vo2_max_ml_kg_min": round(float(biometrics.get("vo2_max_ml_kg_min") or 0), 1),
+            "sleep_score": scores.get("sleep"),
+            "recovery_score": scores.get("recovery"),
+            "movement_score": scores.get("movement"),
+            "training_load": window.get("training_load"),
+            "coach_actions": (window.get("coach_actions") or [])[:3],
+        }
+
+    def _coach_source_reliability(self, source_diagnostics: dict) -> dict:
+        domains = source_diagnostics.get("domains") or {}
+        reliability = {}
+        for domain, payload in domains.items():
+            metrics = payload.get("metrics") or {}
+            primary = next(iter(metrics.values()), None)
+            reliability[domain] = {
+                "status": primary.get("status") if primary else "not_received",
+                "selected_source": primary.get("selected_source") if primary else None,
+                "selected_source_label": primary.get("selected_source_label") if primary else "Auto",
+                "selected_value": primary.get("selected_value") if primary else None,
+                "latest_received_at": primary.get("latest_received_at") if primary else None,
+            }
+        return reliability
 
     def _data_status(self, payload: dict, latest_payload: dict | None, summary: dict) -> dict:
         windows = payload.get("windows") or {}
@@ -198,17 +289,9 @@ class ProcessingService:
         activity = overview.get("activity") or {}
         week_activity = (week_overview or {}).get("activity") or {}
         steps = int(activity.get("steps") or 0)
-        estimated_days = int(activity.get("steps_estimated_days") or 0)
+        estimated_days = int(activity.get("steps_estimated_days") or 0) or int(week_activity.get("steps_estimated_days") or 0)
         recovered_days = int(activity.get("steps_recovered_days") or 0) or int(week_activity.get("steps_recovered_days") or 0)
         source = activity.get("source")
-        if steps <= 0:
-            return self._domain_status(
-                "missing",
-                "low",
-                source,
-                "Activité non mesurée",
-                "Aucun pas ou distance exploitable n'est présent dans la fenêtre récente.",
-            )
         if estimated_days:
             return self._domain_status(
                 "estimated",
@@ -224,6 +307,14 @@ class ProcessingService:
                 source,
                 "Activité corrigée",
                 "Des journées partielles ont été reconstruites depuis les observations normalisées.",
+            )
+        if steps <= 0:
+            return self._domain_status(
+                "missing",
+                "low",
+                source,
+                "Activité non mesurée",
+                "Aucun pas ou distance exploitable n'est présent dans la fenêtre récente.",
             )
         return self._domain_status(
             "measured",

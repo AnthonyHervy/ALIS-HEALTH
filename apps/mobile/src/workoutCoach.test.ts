@@ -1,11 +1,13 @@
 import {
   DAILY_ANALYSIS_PROMPT,
   buildWorkoutAnalysisPrompt,
+  dailyAnalysisPrompt,
   isNotifiableWorkout,
   latestWorkoutCandidate,
   selectWorkoutForAnalysis,
   workoutKey,
   workoutNotificationCopy,
+  workoutAnalysisLoadingLabel,
   workoutShortLabel
 } from './workoutCoach';
 import type { OverviewContext, WorkoutHistoryItem } from './types';
@@ -43,6 +45,19 @@ test('builds a stable key and friendly notification copy for a new run', () => {
   expect(workoutNotificationCopy(item)).toEqual({
     title: 'Bravo pour ce RUN !',
     body: 'Découvrir mon analyse'
+  });
+});
+
+test('labels outdoor cycling as bike while keeping indoor cycling as RPM', () => {
+  expect(workoutShortLabel('cycling')).toBe('VÉLO');
+  expect(workoutShortLabel('stationary_biking')).toBe('RPM');
+  expect(workoutNotificationCopy(workout({ activity_type: 'cycling' }))).toEqual({
+    title: 'Bravo pour cette sortie vélo !',
+    body: 'Découvrir mon analyse'
+  });
+  expect(workoutNotificationCopy(workout({ activity_type: 'cycling' }), 'en')).toEqual({
+    title: 'Nice outdoor ride!',
+    body: 'Open my analysis'
   });
 });
 
@@ -197,6 +212,22 @@ test('builds a strength coach prompt focused on nutrition recovery and lifestyle
   expect(prompt).toContain("n'invente pas");
   expect(prompt).toContain('comme dans une vraie conversation');
   expect(prompt).toContain('pas une checklist');
+});
+
+test('builds English workout prompts and loading labels when requested', () => {
+  const strength = workout({
+    activity_type: 'strength_training',
+    duration_minutes: 45,
+    distance_meters: 0
+  });
+
+  const prompt = buildWorkoutAnalysisPrompt(strength, context([strength]), 'en');
+
+  expect(prompt).toContain('Analyze this Strength training workout');
+  expect(prompt).toContain('prioritize nutrition');
+  expect(prompt).not.toContain('Analyse cette séance');
+  expect(dailyAnalysisPrompt('en')).toContain('review my health data');
+  expect(workoutAnalysisLoadingLabel('en')).toContain('reviewing your workout');
 });
 
 test('asks the daily coach analysis to feel human and encouraging', () => {

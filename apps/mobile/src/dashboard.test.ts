@@ -1,4 +1,4 @@
-import { biometricChartData, biometricSummary, buildLocalCoachAdvice, chartContextForWindow, coachActionsForToday, displayContextForWindow, lifeBalanceForToday, morningInsightForToday, nutritionInsight, overviewForWindow, sleepDetailsForToday, todayCardioInsight, todayWorkoutPresentation, workoutCalorieInsight } from './dashboard';
+import { biometricChartData, biometricSummary, buildLocalCoachAdvice, chartContextForWindow, coachActionsForToday, displayContextForWindow, formatSourceDiagnostics, lifeBalanceForToday, morningInsightForToday, nutritionInsight, overviewForWindow, sleepDetailsForToday, todayCardioInsight, todayWorkoutPresentation, workoutCalorieInsight } from './dashboard';
 import { healthSyncSummary } from './syncPresentation';
 import type { DashboardData } from './types';
 
@@ -247,6 +247,27 @@ test('exposes morning insight when sleep data is missing', () => {
   });
 });
 
+test('localizes backend morning insight when the app language is English', () => {
+  const dashboard = dashboardFixture();
+  dashboard.morning_context = {
+    status: 'partial_today',
+    title: 'Données du matin partielles',
+    is_today_partial: true,
+    recommended_context: 'previous_day',
+    message: 'Données du jour encore partielles : lecture basée sur la dernière journée complète et la dernière nuit mesurée.',
+    today_so_far: dashboard.windows.last_24h.series[0],
+    previous_day: dashboard.windows.week.series[0],
+    last_night: { duration_minutes: 375, awakenings_count: 2 },
+    life_balance_scores: dashboard.windows.last_24h.life_balance_scores
+  };
+
+  expect(morningInsightForToday(dashboard, 'en')).toEqual({
+    status: 'partial_today',
+    title: 'Partial morning data',
+    message: 'Today is still partial: reading based on the last complete day and the last measured night.'
+  });
+});
+
 test('builds a readable nutrition insight for cockpit', () => {
   const dashboard = dashboardFixture();
   dashboard.windows.last_24h.nutrition = {
@@ -391,6 +412,95 @@ test('summarizes HRV and VO2 as interval average and median', () => {
   expect(biometricSummary(dashboard.windows.week, 'hrv').emptyLabel).toBe('Aucune donnée sur cette période.');
 });
 
+test('formats source diagnostics for user-facing reliability copy', () => {
+  const dashboard = dashboardFixture();
+  dashboard.source_diagnostics = {
+    generated_at: '2026-06-14T08:00:00Z',
+    domains: {
+      activity: {
+        selected_source: 'com.garmin.android.apps.connectmobile',
+        selected_source_label: 'Garmin',
+        metrics: {
+          steps: {
+            metric: 'steps',
+            label: 'Pas',
+            domain: 'activity',
+            unit: 'count',
+            status: 'received',
+            selected_source: 'com.garmin.android.apps.connectmobile',
+            selected_source_label: 'Garmin',
+            selected_value: 17334,
+            selected_records: 1,
+            latest_received_at: '2026-05-19T20:00:00+00:00',
+            sources: [
+              { source: 'com.garmin.android.apps.connectmobile', source_label: 'Garmin', total: 17334, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: true },
+              { source: 'com.google.android.apps.fitness', source_label: 'Google Fit', total: 13016, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: false },
+              { source: 'android', source_label: 'Android', total: 20204, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: false }
+            ]
+          }
+        }
+      },
+      biometrics: {
+        selected_source: null,
+        selected_source_label: 'Auto',
+        metrics: {
+          hrv: {
+            metric: 'hrv',
+            label: 'Variabilite cardiaque',
+            domain: 'biometrics',
+            unit: 'ms',
+            status: 'not_received',
+            selected_source: null,
+            selected_source_label: 'Auto',
+            selected_value: null,
+            selected_records: 0,
+            latest_received_at: null,
+            sources: []
+          }
+        }
+      }
+    }
+  };
+
+  expect(formatSourceDiagnostics(dashboard.source_diagnostics)).toEqual([
+    {
+      title: 'Pas',
+      selected: 'Source retenue : Garmin',
+      latest: 'Dernière donnée reçue : 19/05/2026 22:00',
+      sources: [
+        'Garmin a écrit 17 334 pas',
+        'Google Fit a écrit 13 016 pas',
+        'Android a écrit 20 204 pas'
+      ]
+    },
+    {
+      title: 'Variabilite cardiaque',
+      selected: 'Donnée non reçue',
+      latest: 'Dernière donnée reçue : non reçu',
+      sources: []
+    }
+  ]);
+
+  expect(formatSourceDiagnostics(dashboard.source_diagnostics, 'en')).toEqual([
+    {
+      title: 'Steps today',
+      selected: 'Selected source: Garmin',
+      latest: 'Latest data received : 19/05/2026 22:00',
+      sources: [
+        'Garmin wrote 17,334 steps',
+        'Google Fit wrote 13,016 steps',
+        'Android wrote 20,204 steps'
+      ]
+    },
+    {
+      title: 'Heart rate variability',
+      selected: 'Data not received',
+      latest: 'Latest data received : not received',
+      sources: []
+    }
+  ]);
+});
+
 test('summarizes mobile sync state with ALIS-facing wording', () => {
   expect(healthSyncSummary({
     syncing: false,
@@ -426,6 +536,35 @@ test('summarizes mobile sync state with ALIS-facing wording', () => {
     freshnessTone: 'success',
     freshnessLabel: 'Données récentes',
     action: 'Synchroniser'
+  });
+});
+
+test('summarizes mobile sync state in English', () => {
+  expect(healthSyncSummary({
+    syncing: false,
+    lastHealthSyncAt: null,
+    latestRun: null,
+    lastBackgroundStatus: null,
+    language: 'en'
+  })).toEqual({
+    title: 'Initial sync required',
+    detail: 'Run a full sync from this phone.',
+    action: 'Sync'
+  });
+
+  expect(healthSyncSummary({
+    syncing: false,
+    lastHealthSyncAt: '2026-05-26T08:00:00Z',
+    latestRun: { status: 'success', trigger: 'manual', records_received: 42 },
+    lastBackgroundStatus: null,
+    language: 'en',
+    now: new Date('2026-05-26T12:00:00+02:00')
+  })).toMatchObject({
+    title: 'Last sync',
+    detail: 'Today at 10:00',
+    freshnessTone: 'success',
+    freshnessLabel: 'Fresh data',
+    action: 'Sync'
   });
 });
 

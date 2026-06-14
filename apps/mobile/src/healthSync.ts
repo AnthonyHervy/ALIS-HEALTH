@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { normalizeApiBaseUrl } from './apiBaseUrl';
 import { saveNativeBackgroundSettings as defaultSaveNativeBackgroundSettings } from './healthconnect/native/healthconnect-native';
 import { performHealthConnectSync, type ManualSyncResult } from './healthconnect/sync/manual-sync';
+import type { AppLanguage } from './i18n';
 import type { Settings } from './types';
 
 export const HEALTH_LAST_SYNC_AT_KEY = 'alis.health.lastSyncAt';
@@ -59,12 +60,14 @@ export async function loadHealthSyncState({
 export async function runManualHealthSync({
   settings,
   lastSyncAt,
+  language,
   storage = SecureStore,
   sync = performHealthConnectSync,
   saveNativeBackgroundSettings = defaultSaveNativeBackgroundSettings
 }: {
   settings: Settings;
   lastSyncAt: string | null;
+  language?: AppLanguage;
   storage?: SyncStorage;
   sync?: typeof performHealthConnectSync;
   saveNativeBackgroundSettings?: typeof defaultSaveNativeBackgroundSettings;
@@ -73,7 +76,8 @@ export async function runManualHealthSync({
   const result = await sync({
     apiBaseUrl,
     deviceToken: settings.deviceToken,
-    lastSyncAt
+    lastSyncAt,
+    ...(language ? { language } : {})
   });
   await storage.setItemAsync(HEALTH_LAST_SYNC_AT_KEY, result.dataEnd);
   await saveNativeBackgroundSettings(apiBaseUrl, settings.deviceToken, result.dataEnd);

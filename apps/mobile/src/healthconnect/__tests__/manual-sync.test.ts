@@ -463,3 +463,19 @@ test('fails clearly when device is not paired', async () => {
     })
   ).rejects.toThrow('Appareil non appairé');
 });
+
+test('fails clearly in English when device is not paired and English is requested', async () => {
+  await expect(
+    performHealthConnectSync({
+      apiBaseUrl: 'http://127.0.0.1:8010',
+      deviceToken: null,
+      language: 'en',
+      healthConnect: {
+        initialize: jest.fn(),
+        requestPermission: jest.fn(),
+        readRecords: jest.fn()
+      },
+      apiFactory: jest.fn()
+    })
+  ).rejects.toThrow('Device not paired');
+});
