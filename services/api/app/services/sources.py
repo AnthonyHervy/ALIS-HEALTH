@@ -1,5 +1,6 @@
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from math import isfinite
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -175,6 +176,14 @@ def display_source(source: str | None) -> str:
     if value == "android":
         return "Android"
     return source
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if isfinite(numeric) else None
 
 
 def build_data_reliability_summary(diagnostics: dict, *, local_day: str | None = None) -> dict:
@@ -359,13 +368,7 @@ def _values_conflict(left: float, right: float) -> bool:
 def _source_value(source: dict | None) -> float | None:
     if not source:
         return None
-    value = source.get("value")
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return _safe_float(source.get("value"))
 
 
 def _annotate_reliability_sources(
@@ -690,7 +693,7 @@ class SourceConfigService:
         for path in paths:
             value = self._value_at_path(record, path)
             if value is not None:
-                return float(value)
+                return value
         return None
 
     def _diagnostic_timestamp(self, record: dict) -> datetime | None:
@@ -741,7 +744,7 @@ class SourceConfigService:
                 return None
         if value is None:
             return None
-        return float(value)
+        return _safe_float(value)
 
     @staticmethod
     def _json_timestamp(value: datetime | None) -> str | None:
@@ -777,7 +780,9 @@ def selected_raw_daily_sums(
                     break
             if value is None:
                 continue
-            numeric_value = float(value)
+            numeric_value = _safe_float(value)
+            if numeric_value is None:
+                continue
             day = record_end.date().isoformat()
             if day_tz is not None:
                 day = record_end.replace(tzinfo=timezone.utc).astimezone(day_tz).date().isoformat()
@@ -793,7 +798,14 @@ def selected_raw_daily_sums(
             source: {"total": sum(records.values()), "records": len(records)}
             for source, records in source_records.items()
         }
-        source = selected_source if selected_source in sources else next(iter(sources))
+        source = (
+            selected_source
+            if selected_source in sources
+            else max(
+                sources.items(),
+                key=lambda item: (item[1]["total"], item[1]["records"], item[0]),
+            )[0]
+        )
         if fallback_to_best_source_ratio:
             best_source, best_values = max(sources.items(), key=lambda item: item[1]["total"])
             selected_total = sources[source]["total"]

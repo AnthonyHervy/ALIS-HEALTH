@@ -1,6 +1,10 @@
 from datetime import UTC, datetime
 
-from app.services.sources import build_data_reliability_summary, selected_raw_daily_sums
+from app.services.sources import (
+    SourceConfigService,
+    build_data_reliability_summary,
+    selected_raw_daily_sums,
+)
 
 
 def metric(
@@ -98,6 +102,121 @@ def test_selected_raw_daily_sums_can_fallback_when_selected_source_is_incomplete
 
     assert totals["2026-06-14"]["source"] == "com.android.healthconnect.phone.example"
     assert totals["2026-06-14"]["total"] == 16843
+
+
+def test_metric_diagnostic_skips_malformed_numeric_values():
+    service = SourceConfigService(db=None)
+    diagnostic = service._metric_diagnostic(
+        [
+            {
+                "raw_records": {
+                    "Steps": [
+                        {
+                            "startTime": "2026-06-14T06:00:00+00:00",
+                            "endTime": "2026-06-14T18:52:00+00:00",
+                            "count": "bad",
+                            "metadata": {
+                                "id": "bad-steps",
+                                "dataOrigin": "android",
+                            },
+                        }
+                    ]
+                }
+            }
+        ],
+        domain="activity",
+        metric="steps",
+        definition={
+            "label": "Pas",
+            "unit": "count",
+            "raw_type": "Steps",
+            "payload_key": "steps",
+            "value_paths": (("count",),),
+            "payload_value_path": ("count",),
+            "aggregate": "sum",
+        },
+        selected_source="android",
+    )
+
+    assert diagnostic["status"] == "not_received"
+    assert diagnostic["selected_value"] is None
+    assert diagnostic["sources"] == []
+
+
+def test_selected_raw_daily_sums_skips_malformed_values_and_keeps_valid_records():
+    payloads = [
+        {
+            "raw_records": {
+                "Steps": [
+                    {
+                        "startTime": "2026-06-14T06:00:00+00:00",
+                        "endTime": "2026-06-14T12:00:00+00:00",
+                        "count": "bad",
+                        "metadata": {"id": "bad-steps", "dataOrigin": "android"},
+                    },
+                    {
+                        "startTime": "2026-06-14T06:00:00+00:00",
+                        "endTime": "2026-06-14T18:00:00+00:00",
+                        "count": 9000,
+                        "metadata": {
+                            "id": "valid-steps",
+                            "dataOrigin": "com.garmin.android.apps.connectmobile",
+                        },
+                    },
+                ]
+            }
+        }
+    ]
+
+    totals = selected_raw_daily_sums(
+        payloads,
+        record_type="Steps",
+        value_path=["count"],
+        selected_source="com.garmin.android.apps.connectmobile",
+        start=datetime(2026, 6, 14, 0, 0, tzinfo=UTC),
+    )
+
+    assert totals["2026-06-14"]["source"] == "com.garmin.android.apps.connectmobile"
+    assert totals["2026-06-14"]["total"] == 9000
+    assert totals["2026-06-14"]["records"] == 1
+
+
+def test_selected_raw_daily_sums_uses_best_source_when_selected_source_is_absent():
+    garmin_record = {
+        "startTime": "2026-06-14T06:00:00+00:00",
+        "endTime": "2026-06-14T18:00:00+00:00",
+        "count": 5000,
+        "metadata": {
+            "id": "garmin-steps",
+            "dataOrigin": "com.garmin.android.apps.connectmobile",
+        },
+    }
+    android_record = {
+        "startTime": "2026-06-14T06:00:00+00:00",
+        "endTime": "2026-06-14T18:00:00+00:00",
+        "count": 9000,
+        "metadata": {
+            "id": "android-steps",
+            "dataOrigin": "android",
+        },
+    }
+
+    def totals_for(records: list[dict]) -> dict:
+        return selected_raw_daily_sums(
+            [{"raw_records": {"Steps": records}}],
+            record_type="Steps",
+            value_path=["count"],
+            selected_source=None,
+            start=datetime(2026, 6, 14, 0, 0, tzinfo=UTC),
+        )
+
+    first_order = totals_for([garmin_record, android_record])
+    second_order = totals_for([android_record, garmin_record])
+
+    assert first_order["2026-06-14"]["source"] == "android"
+    assert second_order["2026-06-14"]["source"] == "android"
+    assert first_order["2026-06-14"]["total"] == 9000
+    assert second_order["2026-06-14"]["total"] == 9000
 
 
 def test_reliability_marks_complete_preferred_source_as_measured():
