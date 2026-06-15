@@ -263,6 +263,38 @@ export type SourceDiagnostics = {
   }>;
 };
 
+export type ReliabilityStatus = 'measured' | 'partial' | 'corrected' | 'missing' | 'conflict';
+export type ReliabilityConfidence = 'high' | 'medium' | 'low';
+
+export type MetricReliabilitySummary = {
+  metric: string;
+  domain: 'activity' | 'sleep' | 'workouts' | 'biometrics' | 'nutrition';
+  status: ReliabilityStatus;
+  confidence: ReliabilityConfidence;
+  selected_source?: string | null;
+  selected_source_label: string;
+  selected_value?: number | null;
+  unit?: string | null;
+  latest_received_at?: string | null;
+  badge_label: string;
+  user_explanation: string;
+  coach_reason: string;
+  sources: ReadonlyArray<{
+    source: string;
+    source_label: string;
+    value?: number | null;
+    unit?: string | null;
+    latest_received_at?: string | null;
+    selected: boolean;
+    note?: string | null;
+  }>;
+};
+
+export type DataReliabilitySummary = {
+  generated_at?: string | null;
+  metrics: Record<string, MetricReliabilitySummary>;
+};
+
 export type CoachSummary = {
   version: string;
   generated_at?: string;
@@ -295,6 +327,7 @@ export type DashboardData = {
   sync_summary: SyncRunSummary;
   source_config: SourceConfig;
   source_diagnostics?: SourceDiagnostics;
+  data_reliability?: DataReliabilitySummary;
   coach_summary?: CoachSummary;
   data_status?: DataStatus;
 };

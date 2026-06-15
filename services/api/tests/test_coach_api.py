@@ -419,6 +419,119 @@ def test_coach_fallback_chat_accepts_precomputed_summary_context():
     assert "7,420" in response or "7\u202f420" in response
 
 
+def test_coach_fallback_omits_placeholder_source_when_summary_has_no_source_label():
+    context = {
+        "coach_summary": {
+            "windows": {
+                "last_24h": {
+                    "sleep_minutes": 420,
+                    "steps": 7420,
+                    "active_calories_kcal": 520,
+                    "workout_minutes": 45,
+                    "nutrition_meals": 0,
+                },
+                "week": {"average_daily_steps": 7900, "workout_minutes": 180},
+            },
+            "source_reliability": {},
+        },
+    }
+
+    response = CoachService._fallback_chat(context, "Je pousse demain ?")
+
+    assert "source retenue" not in response
+    assert "via " not in response.split("Côté mouvement, ", 1)[1].split(".", 1)[0]
+
+
+def test_coach_fallback_mentions_corrected_steps_reliability_when_relevant():
+    context = {
+        "coach_summary": {
+            "windows": {
+                "last_24h": {
+                    "sleep_minutes": 420,
+                    "steps": 15459,
+                    "active_calories_kcal": 520,
+                    "workout_minutes": 45,
+                    "nutrition_meals": 0,
+                },
+                "week": {"average_daily_steps": 7900, "workout_minutes": 180},
+            },
+            "source_reliability": {
+                "steps": {
+                    "status": "corrected",
+                    "selected_source_label": "Garmin",
+                    "selected_value": 15459,
+                    "coach_reason": "La source retenue semblait partielle; Garmin presente une valeur plus complete pour steps.",
+                }
+            },
+        },
+    }
+
+    response = CoachService._fallback_chat(context, "Pourquoi mes pas sont différents ?")
+
+    assert "Garmin" in response
+    assert "partielle" in response
+
+
+def test_coach_fallback_mentions_missing_steps_reliability_when_relevant():
+    context = {
+        "coach_summary": {
+            "windows": {
+                "last_24h": {
+                    "sleep_minutes": 420,
+                    "steps": 0,
+                    "active_calories_kcal": 520,
+                    "workout_minutes": 45,
+                    "nutrition_meals": 0,
+                },
+                "week": {"average_daily_steps": 7900, "workout_minutes": 180},
+            },
+            "source_reliability": {
+                "steps": {
+                    "status": "missing",
+                    "selected_source_label": "Auto",
+                    "selected_value": None,
+                }
+            },
+        },
+    }
+
+    response = CoachService._fallback_chat(context, "Pourquoi mes pas sont à zéro ?")
+
+    assert "pas fiables" in response or "non reçu" in response
+    assert "retient 0 pas via" not in response
+
+
+def test_coach_fallback_keeps_english_reliability_note_in_english():
+    context = {
+        "coach_summary": {
+            "windows": {
+                "last_24h": {
+                    "sleep_minutes": 420,
+                    "steps": 15459,
+                    "active_calories_kcal": 520,
+                    "workout_minutes": 45,
+                    "nutrition_meals": 0,
+                },
+                "week": {"average_daily_steps": 7900, "workout_minutes": 180},
+            },
+            "source_reliability": {
+                "steps": {
+                    "status": "corrected",
+                    "selected_source_label": "Garmin",
+                    "selected_value": 15459,
+                    "coach_reason": "La source retenue semblait partielle; Garmin presente une valeur plus complete pour steps.",
+                }
+            },
+        },
+    }
+
+    response = CoachService._fallback_chat(context, "Why do my steps differ?", language="en")
+
+    assert "Step source note" in response
+    assert "source retenue" not in response
+    assert "partielle" not in response
+
+
 def test_coach_fallback_advice_accepts_precomputed_summary_context():
     context = {
         "coach_summary": {

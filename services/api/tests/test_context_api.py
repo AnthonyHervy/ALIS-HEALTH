@@ -184,6 +184,35 @@ def life_balance_batch() -> dict:
     return batch
 
 
+def corrected_steps_reliability_batch() -> dict:
+    return {
+        "source_type": "healthconnect",
+        "device_name": "Pixel Test",
+        "device_id": "pixel-test-1",
+        "data_start": "2026-06-14T00:00:00+00:00",
+        "data_end": "2026-06-14T18:00:00+00:00",
+        "raw_records": {
+            "Steps": [
+                {
+                    "startTime": "2026-06-14T08:00:00+00:00",
+                    "endTime": "2026-06-14T18:00:00+00:00",
+                    "count": 6000,
+                    "metadata": {"dataOrigin": "android", "id": "raw-android-steps"},
+                },
+                {
+                    "startTime": "2026-06-14T08:00:00+00:00",
+                    "endTime": "2026-06-14T18:00:00+00:00",
+                    "count": 15459,
+                    "metadata": {
+                        "dataOrigin": "com.garmin.android.apps.connectmobile",
+                        "id": "raw-garmin-steps",
+                    },
+                },
+            ]
+        },
+    }
+
+
 def incomplete_raw_activity_batch() -> dict:
     return {
         "source_type": "healthconnect",
@@ -953,7 +982,7 @@ async def test_dashboard_context_bundles_windows_sync_and_sources(test_app):
     assert payload["snapshot_freshness"]["source_sync_run_id"] == payload["latest_sync_run"]["id"]
     assert payload["coach_summary"]["version"] == "2026-06-14.1"
     assert payload["coach_summary"]["windows"]["last_24h"]["sleep_minutes"] > 0
-    assert payload["coach_summary"]["source_reliability"]["activity"]["status"] in {"received", "not_received"}
+    assert isinstance(payload["coach_summary"]["source_reliability"], dict)
     assert payload["generated_at"]
     assert payload["computed_at"]
     assert payload["is_stale"] is False
@@ -962,6 +991,32 @@ async def test_dashboard_context_bundles_windows_sync_and_sources(test_app):
     assert payload["data_status"]["domains"]["sleep"]["status"] == "measured"
     assert payload["data_status"]["domains"]["activity"]["source"]
     assert payload["data_status"]["domains"]["nutrition"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_bundle_exposes_data_reliability_for_steps(test_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        await client.post("/api/v1/ingest/health", json=corrected_steps_reliability_batch(), headers=headers)
+        response = await client.post("/api/v1/context/dashboard/refresh", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    steps_reliability = payload["data_reliability"]["metrics"]["steps"]
+    assert steps_reliability["status"] == "corrected"
+    assert steps_reliability["selected_source_label"] == "Garmin"
+    assert steps_reliability["selected_value"] == 15459
+    assert payload["coach_summary"]["source_reliability"]["steps"]["status"] == "corrected"
+    assert "activity" not in payload["coach_summary"]["source_reliability"]
 
 
 @pytest.mark.asyncio
@@ -997,6 +1052,65 @@ async def test_dashboard_context_serves_existing_snapshot_without_recomputing(te
         select(HealthDashboardSnapshot).where(HealthDashboardSnapshot.user_id == user_id)
     )
     assert snapshot is not None
+
+
+@pytest.mark.asyncio
+async def test_dashboard_and_bundle_backfill_reliability_for_legacy_snapshot(test_app, db_session, monkeypatch):
+    from app.models import HealthDashboardSnapshot
+    from app.services.context import HealthContextService
+
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        user_id = registered.json()["user_id"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        await client.post("/api/v1/ingest/health", json=corrected_steps_reliability_batch(), headers=headers)
+        refreshed = await client.post("/api/v1/context/dashboard/refresh", headers=headers)
+        assert refreshed.status_code == 200
+
+        snapshot = await db_session.scalar(
+            select(HealthDashboardSnapshot).where(HealthDashboardSnapshot.user_id == user_id)
+        )
+        assert snapshot is not None
+
+        legacy_payload = deepcopy(snapshot.payload or {})
+        legacy_payload.pop("data_reliability", None)
+        legacy_payload["coach_summary"] = deepcopy(legacy_payload.get("coach_summary") or {})
+        legacy_payload["coach_summary"]["source_reliability"] = {
+            "activity": {
+                "status": "received",
+                "selected_source_label": "Android",
+                "selected_value": 6000,
+            }
+        }
+        snapshot.payload = legacy_payload
+        await db_session.commit()
+
+        async def fail_if_called(*_args, **_kwargs):
+            raise AssertionError("legacy snapshot reliability should be backfilled without recomputing windows")
+
+        monkeypatch.setattr(HealthContextService, "overview", fail_if_called)
+        bundle = await HealthContextService(db_session).dashboard_bundle(user_id)
+        response = await client.get("/api/v1/context/dashboard", headers=headers)
+
+    assert bundle is not None
+    assert bundle["data_reliability"]["metrics"]["steps"]["status"] == "corrected"
+    assert bundle["data_reliability"]["metrics"]["steps"]["selected_source_label"] == "Garmin"
+    assert bundle["coach_summary"]["source_reliability"]["steps"]["status"] == "corrected"
+    assert "activity" not in bundle["coach_summary"]["source_reliability"]
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data_reliability"]["metrics"]["steps"]["status"] == "corrected"
+    assert payload["coach_summary"]["source_reliability"]["steps"]["status"] == "corrected"
+    assert "activity" not in payload["coach_summary"]["source_reliability"]
 
 
 @pytest.mark.asyncio

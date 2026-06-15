@@ -17,7 +17,14 @@ from app.models import (
     HealthSyncRun,
     HealthWorkout,
 )
-from app.services.sources import SourceConfigService, data_origin, parse_iso, record_dedupe_id, selected_raw_daily_sums
+from app.services.sources import (
+    SourceConfigService,
+    data_origin,
+    enrich_dashboard_reliability_payload,
+    parse_iso,
+    record_dedupe_id,
+    selected_raw_daily_sums,
+)
 
 WINDOWS = {
     "24h": timedelta(hours=24),
@@ -265,8 +272,7 @@ class HealthContextService:
         )
         if snapshot is None:
             return None
-        payload = snapshot.payload or {}
-        return payload
+        return enrich_dashboard_reliability_payload(snapshot.payload)
 
     async def morning_brief(self, user_id: str) -> dict:
         last_24h = await self.overview(user_id, "24h")

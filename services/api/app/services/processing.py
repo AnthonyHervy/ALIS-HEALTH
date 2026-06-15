@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import HealthDashboardSnapshot, HealthProcessingJob, HealthSyncRun
 from app.schemas import SyncRunResponse
 from app.services.context import HealthContextService
-from app.services.sources import SourceConfigService
+from app.services.sources import (
+    SourceConfigService,
+    build_data_reliability_summary,
+    compact_coach_source_reliability,
+    enrich_dashboard_reliability_payload,
+)
 
 DASHBOARD_SNAPSHOT_VERSION = "2026-06-14.1"
 
@@ -87,6 +92,7 @@ class ProcessingService:
         }
         source_config = await source_service.config(user_id)
         source_diagnostics = await source_service.diagnostics(user_id, source_config)
+        data_reliability = build_data_reliability_summary(source_diagnostics)
         generated_at = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
         payload = {
             "snapshot_version": DASHBOARD_SNAPSHOT_VERSION,
@@ -102,7 +108,8 @@ class ProcessingService:
             "morning_context": context.morning_context(windows),
             "source_config": source_config,
             "source_diagnostics": source_diagnostics,
-            "coach_summary": self._coach_summary(windows, source_diagnostics, generated_at),
+            "data_reliability": data_reliability,
+            "coach_summary": self._coach_summary(windows, data_reliability, generated_at),
         }
         snapshot = await self.latest_dashboard_snapshot(user_id)
         computed_at = datetime.utcnow()
@@ -128,7 +135,7 @@ class ProcessingService:
             await self.db.commit()
 
         latest_payload = SyncRunResponse.model_validate(latest).model_dump(mode="json") if latest else None
-        payload = dict(snapshot.payload)
+        payload = enrich_dashboard_reliability_payload(snapshot.payload)
         if "morning_context" not in payload and "windows" in payload:
             payload["morning_context"] = HealthContextService(self.db).morning_context(payload["windows"])
         payload.setdefault("snapshot_version", DASHBOARD_SNAPSHOT_VERSION)
@@ -148,7 +155,7 @@ class ProcessingService:
         payload["data_status"] = self._data_status(payload, latest_payload, payload["sync_summary"])
         return payload
 
-    def _coach_summary(self, windows: dict, source_diagnostics: dict, generated_at: str) -> dict:
+    def _coach_summary(self, windows: dict, data_reliability: dict, generated_at: str) -> dict:
         return {
             "version": DASHBOARD_SNAPSHOT_VERSION,
             "generated_at": generated_at,
@@ -157,7 +164,7 @@ class ProcessingService:
                 "week": self._coach_window_summary(windows.get("week") or {}, "7j"),
                 "month": self._coach_window_summary(windows.get("month") or {}, "30j"),
             },
-            "source_reliability": self._coach_source_reliability(source_diagnostics),
+            "source_reliability": compact_coach_source_reliability(data_reliability),
             "data_limitations": [
                 "Les scores ALIS sont des aides a la lecture, pas des diagnostics medicaux.",
                 "Une donnee absente signifie non recue ou non validee, pas absence de comportement.",
@@ -199,21 +206,6 @@ class ProcessingService:
             "training_load": window.get("training_load"),
             "coach_actions": (window.get("coach_actions") or [])[:3],
         }
-
-    def _coach_source_reliability(self, source_diagnostics: dict) -> dict:
-        domains = source_diagnostics.get("domains") or {}
-        reliability = {}
-        for domain, payload in domains.items():
-            metrics = payload.get("metrics") or {}
-            primary = next(iter(metrics.values()), None)
-            reliability[domain] = {
-                "status": primary.get("status") if primary else "not_received",
-                "selected_source": primary.get("selected_source") if primary else None,
-                "selected_source_label": primary.get("selected_source_label") if primary else "Auto",
-                "selected_value": primary.get("selected_value") if primary else None,
-                "latest_received_at": primary.get("latest_received_at") if primary else None,
-            }
-        return reliability
 
     def _data_status(self, payload: dict, latest_payload: dict | None, summary: dict) -> dict:
         windows = payload.get("windows") or {}
