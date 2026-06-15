@@ -200,6 +200,42 @@ def build_data_reliability_summary(diagnostics: dict, *, local_day: str | None =
     return {"generated_at": diagnostics.get("generated_at"), "metrics": summaries}
 
 
+def compact_coach_source_reliability(data_reliability: dict | None) -> dict:
+    metrics = (data_reliability or {}).get("metrics") or {}
+    return {
+        metric: {
+            "status": payload.get("status"),
+            "confidence": payload.get("confidence"),
+            "selected_source": payload.get("selected_source"),
+            "selected_source_label": payload.get("selected_source_label"),
+            "selected_value": payload.get("selected_value"),
+            "latest_received_at": payload.get("latest_received_at"),
+            "unit": payload.get("unit"),
+            "coach_reason": payload.get("coach_reason"),
+        }
+        for metric, payload in metrics.items()
+        if (payload or {}).get("status") in {"partial", "corrected", "conflict", "missing"}
+    }
+
+
+def enrich_dashboard_reliability_payload(payload: dict | None) -> dict:
+    enriched = dict(payload or {})
+    data_reliability = enriched.get("data_reliability")
+    if not isinstance(data_reliability, dict):
+        diagnostics = enriched.get("source_diagnostics") or {}
+        if diagnostics:
+            data_reliability = build_data_reliability_summary(diagnostics)
+            enriched["data_reliability"] = data_reliability
+        else:
+            data_reliability = None
+
+    coach_summary = dict(enriched.get("coach_summary") or {})
+    if coach_summary or data_reliability:
+        coach_summary["source_reliability"] = compact_coach_source_reliability(data_reliability)
+        enriched["coach_summary"] = coach_summary
+    return enriched
+
+
 def _metric_reliability_summary(
     metric_name: str,
     domain: str,
@@ -431,6 +467,21 @@ def _reliability_coach_reason(
 
 
 def _diagnostic_local_day(diagnostics: dict) -> str | None:
+    candidate_timestamps = []
+    for domain_payload in (diagnostics.get("domains") or {}).values():
+        for metric_payload in ((domain_payload or {}).get("metrics") or {}).values():
+            latest_received_at = (metric_payload or {}).get("latest_received_at")
+            parsed_metric = parse_iso(latest_received_at)
+            if parsed_metric is not None:
+                candidate_timestamps.append(parsed_metric)
+            for source_payload in (metric_payload or {}).get("sources") or []:
+                parsed_source = parse_iso((source_payload or {}).get("latest_received_at"))
+                if parsed_source is not None:
+                    candidate_timestamps.append(parsed_source)
+    if candidate_timestamps:
+        anchor = max(candidate_timestamps)
+        return anchor.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Europe/Paris")).date().isoformat()
+
     generated_at = parse_iso(diagnostics.get("generated_at"))
     if generated_at is None:
         return None

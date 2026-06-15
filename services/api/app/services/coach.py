@@ -506,9 +506,11 @@ class CoachService:
         reliability = summary.get("source_reliability") or {}
         steps_source = reliability.get("steps") or {}
         steps_reliability_status = steps_source.get("status")
+        legacy_activity_source = reliability.get("activity") or {}
         steps_reliability_needs_note = steps_reliability_status in {"partial", "corrected", "conflict"}
-        activity_source = steps_source if steps_reliability_needs_note else (reliability.get("activity") or {})
-        selected_source = activity_source.get("selected_source_label") or ("selected source" if language == "en" else "source retenue")
+        steps_reliability_missing = steps_reliability_status == "missing"
+        activity_source = steps_source if (steps_reliability_needs_note or steps_reliability_missing) else legacy_activity_source
+        selected_source = activity_source.get("selected_source_label")
         actions = CoachService._context_actions(context)
 
         scores = []
@@ -539,23 +541,68 @@ class CoachService:
         reliability_line = ""
         if steps_reliability_needs_note:
             reason = steps_source.get("coach_reason")
-            if reason:
-                reliability_line = (
-                    f" Step source note: {reason} "
-                    if language == "en"
-                    else f" Note sur la source des pas: {reason} "
-                )
-            elif language == "en":
-                reliability_line = f" Step source note: ALIS keeps {selected_source} because another step source looks partial. "
+            if language == "en":
+                if steps_reliability_status == "corrected":
+                    reliability_line = (
+                        f" Step source note: ALIS keeps {selected_source or 'the more complete source'} because another "
+                        "step source looked partial. "
+                    )
+                elif steps_reliability_status == "conflict":
+                    reliability_line = (
+                        f" Step source note: ALIS keeps {selected_source or 'the selected source'}, but another step source differs strongly, "
+                        "so interpret movement conservatively. "
+                    )
+                else:
+                    reliability_line = (
+                        f" Step source note: ALIS keeps {selected_source or 'the selected source'}, but the latest step reading looks partial "
+                        "for this local day. "
+                    )
+            elif reason:
+                reliability_line = f" Note sur la source des pas: {reason} "
             else:
-                reliability_line = f" Note sur la source des pas: ALIS retient {selected_source} car une autre source semble partielle. "
+                reliability_line = (
+                    f" Note sur la source des pas: ALIS retient {selected_source} car une autre source semble partielle. "
+                    if selected_source
+                    else " Note sur la source des pas: une autre source semble partielle, donc ALIS garde la valeur la plus cohérente. "
+                )
+
+        if language == "en":
+            if steps_reliability_missing:
+                movement_line = (
+                    "For movement, ALIS has not received reliable step data for this window yet, "
+                    f"but it still sees {int(last_24h.get('workout_minutes') or 0)} min of sport. "
+                )
+            elif selected_source:
+                movement_line = (
+                    f"For movement, ALIS keeps {int(last_24h.get('steps') or 0):,} steps via {selected_source}, "
+                    f"with {int(last_24h.get('workout_minutes') or 0)} min of sport. "
+                )
+            else:
+                movement_line = (
+                    f"For movement, ALIS keeps {int(last_24h.get('steps') or 0):,} steps, "
+                    f"with {int(last_24h.get('workout_minutes') or 0)} min of sport. "
+                )
+        elif steps_reliability_missing:
+            movement_line = (
+                "Côté mouvement, ALIS n'a pas encore reçu de données de pas fiables sur cette fenêtre, "
+                f"mais voit bien {int(last_24h.get('workout_minutes') or 0)} min de sport. "
+            )
+        elif selected_source:
+            movement_line = (
+                f"Côté mouvement, ALIS retient {int(last_24h.get('steps') or 0):,} pas via {selected_source}, "
+                f"avec {int(last_24h.get('workout_minutes') or 0)} min de sport. "
+            )
+        else:
+            movement_line = (
+                f"Côté mouvement, ALIS retient {int(last_24h.get('steps') or 0):,} pas, "
+                f"avec {int(last_24h.get('workout_minutes') or 0)} min de sport. "
+            )
 
         if language == "en":
             return (
                 "The local model is taking too long, so here is a quick read from the ALIS summary already calculated. 🙂\n\n"
                 f"Over the last 24 h, I have {score_line}. "
-                f"For movement, ALIS keeps {int(last_24h.get('steps') or 0):,} steps via {selected_source}, "
-                f"with {int(last_24h.get('workout_minutes') or 0)} min of sport. "
+                f"{movement_line}"
                 f"{reliability_line}"
                 f"Over 7 days, the average is {int(week.get('average_daily_steps') or 0):,} steps/day and "
                 f"{int(week.get('workout_minutes') or 0)} min of sport.\n\n"
@@ -568,8 +615,7 @@ class CoachService:
         return (
             "Le modèle local met trop longtemps à répondre, donc je te donne une lecture rapide avec le résumé ALIS déjà calculé. 🙂\n\n"
             f"Sur les dernières 24 h, j'ai {score_line}. "
-            f"Côté mouvement, ALIS retient {int(last_24h.get('steps') or 0):,} pas via {selected_source}, "
-            f"avec {int(last_24h.get('workout_minutes') or 0)} min de sport. "
+            f"{movement_line}"
             f"{reliability_line}"
             f"Sur 7 jours, la moyenne est à {int(week.get('average_daily_steps') or 0):,} pas/j et "
             f"{int(week.get('workout_minutes') or 0)} min de sport.\n\n"

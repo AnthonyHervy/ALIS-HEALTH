@@ -36,3 +36,10 @@ test('translates settings profile and advanced labels in English', () => {
   expect(t('en', 'settings.lastManualSync')).toBe('Last manual sync');
   expect(t('en', 'settings.foodSources')).toBe('Food sources and local analysis.');
 });
+
+test('contains reliability copy in French and English', () => {
+  expect(t('fr', 'reliability.title' as never)).toBe('Sources et fiabilité');
+  expect(t('en', 'reliability.title' as never)).toBe('Sources & reliability');
+  expect(t('fr', 'reliability.corrected' as never)).toBe('Corrigé');
+  expect(t('en', 'reliability.corrected' as never)).toBe('Corrected');
+});

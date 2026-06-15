@@ -46,7 +46,7 @@
 - Modify: `services/api/tests/test_sources.py`
 - Later Modify: `services/api/app/services/sources.py`
 
-- [ ] **Step 1: Write failing tests for reliability decisions**
+- [x] **Step 1: Write failing tests for reliability decisions**
 
 Add these tests to `services/api/tests/test_sources.py`:
 
@@ -191,7 +191,7 @@ def test_reliability_marks_missing_metric_without_implying_zero_behavior():
     assert "ne signifie pas" in hrv["coach_reason"].lower()
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -199,11 +199,11 @@ Run:
 rtk uv run --extra dev pytest tests/test_sources.py -q
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/services/api`.
+From `services/api`.
 
 Expected: failure importing `build_data_reliability_summary`.
 
-- [ ] **Step 3: Commit RED tests**
+- [x] **Step 3: Commit RED tests**
 
 ```bash
 rtk git add services/api/tests/test_sources.py
@@ -218,7 +218,7 @@ rtk git commit -m "test: cover data reliability summary decisions"
 - Modify: `services/api/app/services/sources.py`
 - Test: `services/api/tests/test_sources.py`
 
-- [ ] **Step 1: Implement minimal reliability builder**
+- [x] **Step 1: Implement minimal reliability builder**
 
 Add this public function and helpers near the existing diagnostic helpers in `services/api/app/services/sources.py`:
 
@@ -346,7 +346,7 @@ def _is_stale(timestamp: str | None, local_day: str | None) -> bool:
     return parsed.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Europe/Paris")).date().isoformat() != local_day
 ```
 
-- [ ] **Step 2: Run Task 1 tests to verify GREEN**
+- [x] **Step 2: Run Task 1 tests to verify GREEN**
 
 Run:
 
@@ -354,15 +354,15 @@ Run:
 rtk uv run --extra dev pytest tests/test_sources.py -q
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/services/api`.
+From `services/api`.
 
 Expected: all `test_sources.py` tests pass.
 
-- [ ] **Step 3: Keep API labels product-neutral**
+- [x] **Step 3: Keep API labels product-neutral**
 
 Confirm the API returns stable status values and simple fallback labels only. User-facing accented French labels and English labels belong in mobile i18n, not in API language branching.
 
-- [ ] **Step 4: Commit implementation**
+- [x] **Step 4: Commit implementation**
 
 ```bash
 rtk git add services/api/app/services/sources.py
@@ -379,7 +379,7 @@ rtk git commit -m "feat: build data reliability summaries"
 - Modify: `services/api/tests/test_coach_api.py`
 - Test: `services/api/tests/test_context_api.py`, `services/api/tests/test_coach_api.py`
 
-- [ ] **Step 1: Write dashboard integration test**
+- [x] **Step 1: Write dashboard integration test**
 
 Add to `services/api/tests/test_context_api.py` near the existing source diagnostics tests:
 
@@ -422,7 +422,7 @@ async def test_dashboard_bundle_exposes_data_reliability_for_steps(test_app):
     assert payload["coach_summary"]["source_reliability"]["steps"]["status"] == "corrected"
 ```
 
-- [ ] **Step 2: Write coach fallback test**
+- [x] **Step 2: Write coach fallback test**
 
 Add to `services/api/tests/test_coach_api.py`:
 
@@ -459,7 +459,7 @@ def test_coach_fallback_mentions_corrected_steps_reliability_when_relevant():
     assert "partielle" in response.lower()
 ```
 
-- [ ] **Step 3: Run tests to verify RED**
+- [x] **Step 3: Run tests to verify RED**
 
 Run:
 
@@ -467,11 +467,11 @@ Run:
 rtk uv run --extra dev pytest tests/test_context_api.py::test_dashboard_bundle_exposes_data_reliability_for_steps tests/test_coach_api.py::test_coach_fallback_mentions_corrected_steps_reliability_when_relevant -q
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/services/api`.
+From `services/api`.
 
 Expected: failures because `data_reliability` is not included and fallback does not mention it.
 
-- [ ] **Step 4: Implement dashboard integration**
+- [x] **Step 4: Implement dashboard integration**
 
 In `services/api/app/services/context.py`, import:
 
@@ -509,7 +509,7 @@ def _compact_reliability_for_coach(data_reliability: dict | None) -> dict:
     }
 ```
 
-- [ ] **Step 5: Implement coach fallback reliability sentence**
+- [x] **Step 5: Implement coach fallback reliability sentence**
 
 In `services/api/app/services/coach.py`, update `_fallback_chat_from_summary` after `reliability = summary.get("source_reliability") or {}`:
 
@@ -528,7 +528,7 @@ if steps_reliability.get("status") in {"partial", "corrected", "conflict"}:
 
 Then append `reliability_note` to the movement sentence in both language branches.
 
-- [ ] **Step 6: Run integration tests to verify GREEN**
+- [x] **Step 6: Run integration tests to verify GREEN**
 
 Run:
 
@@ -536,11 +536,11 @@ Run:
 rtk uv run --extra dev pytest tests/test_context_api.py::test_dashboard_bundle_exposes_data_reliability_for_steps tests/test_coach_api.py::test_coach_fallback_mentions_corrected_steps_reliability_when_relevant -q
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/services/api`.
+From `services/api`.
 
 Expected: both tests pass.
 
-- [ ] **Step 7: Commit dashboard/coach integration**
+- [x] **Step 7: Commit dashboard/coach integration**
 
 ```bash
 rtk git add services/api/app/services/context.py services/api/app/services/coach.py services/api/tests/test_context_api.py services/api/tests/test_coach_api.py
@@ -558,7 +558,7 @@ rtk git commit -m "feat: expose reliability context to dashboard and coach"
 - Modify: `apps/mobile/src/i18n.ts`
 - Modify: `apps/mobile/src/i18n.test.ts`
 
-- [ ] **Step 1: Write failing mobile helper tests**
+- [x] **Step 1: Write failing mobile helper tests**
 
 Add to `apps/mobile/src/dashboard.test.ts`:
 
@@ -638,7 +638,7 @@ test('contains reliability copy in French and English', () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -646,11 +646,11 @@ Run:
 rtk npm test -- --runInBand src/dashboard.test.ts src/i18n.test.ts
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/apps/mobile`.
+From `apps/mobile`.
 
 Expected: failure because `formatReliabilityMetric` and i18n keys do not exist.
 
-- [ ] **Step 3: Add TypeScript types**
+- [x] **Step 3: Add TypeScript types**
 
 Add to `apps/mobile/src/types.ts`:
 
@@ -694,7 +694,7 @@ Add to `DashboardData`:
 data_reliability?: DataReliabilitySummary;
 ```
 
-- [ ] **Step 4: Add i18n keys**
+- [x] **Step 4: Add i18n keys**
 
 Add FR keys to `apps/mobile/src/i18n.ts`:
 
@@ -722,7 +722,7 @@ Add EN keys:
 'reliability.sourcesCompared': 'Compared sources',
 ```
 
-- [ ] **Step 5: Implement presentation helper**
+- [x] **Step 5: Implement presentation helper**
 
 In `apps/mobile/src/dashboard.ts`, import types:
 
@@ -811,7 +811,7 @@ function formatReliabilityValue(value: number | null, unit: string | null | unde
 }
 ```
 
-- [ ] **Step 6: Run helper tests to verify GREEN**
+- [x] **Step 6: Run helper tests to verify GREEN**
 
 Run:
 
@@ -819,11 +819,11 @@ Run:
 rtk npm test -- --runInBand src/dashboard.test.ts src/i18n.test.ts
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/apps/mobile`.
+From `apps/mobile`.
 
 Expected: helper and i18n tests pass.
 
-- [ ] **Step 7: Commit mobile helper layer**
+- [x] **Step 7: Commit mobile helper layer**
 
 ```bash
 rtk git add apps/mobile/src/types.ts apps/mobile/src/dashboard.ts apps/mobile/src/dashboard.test.ts apps/mobile/src/i18n.ts apps/mobile/src/i18n.test.ts
@@ -839,7 +839,7 @@ rtk git commit -m "feat: format mobile reliability summaries"
 - Modify: `apps/mobile/src/dashboard.test.ts`
 - Test: `apps/mobile/src/dashboard.test.ts`, `apps/mobile/src/i18n.test.ts`
 
-- [ ] **Step 1: Add helper test for badge visibility**
+- [x] **Step 1: Add helper test for badge visibility**
 
 Add to `apps/mobile/src/dashboard.test.ts`:
 
@@ -877,7 +877,7 @@ test('shows reliability badge for corrected partial conflict and missing metrics
 });
 ```
 
-- [ ] **Step 2: Run test to verify RED**
+- [x] **Step 2: Run test to verify RED**
 
 Run:
 
@@ -885,11 +885,11 @@ Run:
 rtk npm test -- --runInBand src/dashboard.test.ts
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/apps/mobile`.
+From `apps/mobile`.
 
 Expected: failure because `shouldShowReliabilityBadge` does not exist or presentation lacks status.
 
-- [ ] **Step 3: Extend presentation helper**
+- [x] **Step 3: Extend presentation helper**
 
 In `apps/mobile/src/dashboard.ts`, add `status` to `ReliabilityPresentation` and implement:
 
@@ -899,7 +899,7 @@ export function shouldShowReliabilityBadge(item: Pick<ReliabilityPresentation, '
 }
 ```
 
-- [ ] **Step 4: Add badge props to MetricTile**
+- [x] **Step 4: Add badge props to MetricTile**
 
 In `apps/mobile/App.tsx`, update `MetricTile` props:
 
@@ -932,7 +932,7 @@ Inside `MetricTile`, render a compact `Pressable` in the card header when `shoul
 ) : null}
 ```
 
-- [ ] **Step 5: Pass reliability into Today tiles**
+- [x] **Step 5: Pass reliability into Today tiles**
 
 In `TodayStrip`, add props:
 
@@ -952,7 +952,7 @@ const cardioReliability = formatReliabilityMetric(reliabilitySummary, 'heart_rat
 
 Pass the relevant reliability prop to each `MetricTile`.
 
-- [ ] **Step 6: Add detail surface state**
+- [x] **Step 6: Add detail surface state**
 
 In the main `App` component, add:
 
@@ -990,7 +990,7 @@ Render a modal or in-app panel:
 </Modal>
 ```
 
-- [ ] **Step 7: Run mobile tests and type-check**
+- [x] **Step 7: Run mobile tests and type-check**
 
 Run:
 
@@ -999,11 +999,11 @@ rtk npm test -- --runInBand src/dashboard.test.ts src/i18n.test.ts
 rtk npm run type-check
 ```
 
-From `/Users/anthony/WORK/ALIS/ALIS-HEALTH/apps/mobile`.
+From `apps/mobile`.
 
 Expected: tests and type-check pass.
 
-- [ ] **Step 8: Commit mobile UI**
+- [x] **Step 8: Commit mobile UI**
 
 ```bash
 rtk git add apps/mobile/App.tsx apps/mobile/src/dashboard.ts apps/mobile/src/dashboard.test.ts
@@ -1017,7 +1017,7 @@ rtk git commit -m "feat: show reliability badges on today cards"
 **Files:**
 - All modified files
 
-- [ ] **Step 1: Run API test suite**
+- [x] **Step 1: Run API test suite**
 
 Run:
 
@@ -1028,12 +1028,12 @@ rtk uv run --extra dev pytest tests -q
 From:
 
 ```bash
-cd /Users/anthony/WORK/ALIS/ALIS-HEALTH/services/api
+cd services/api
 ```
 
 Expected: all API tests pass.
 
-- [ ] **Step 2: Run mobile test suite and type-check**
+- [x] **Step 2: Run mobile test suite and type-check**
 
 Run:
 
@@ -1046,12 +1046,12 @@ rtk npm run type-check
 From:
 
 ```bash
-cd /Users/anthony/WORK/ALIS/ALIS-HEALTH/apps/mobile
+cd apps/mobile
 ```
 
 Expected: all Jest tests pass and TypeScript succeeds.
 
-- [ ] **Step 3: Remove generated local dependencies before security scan**
+- [x] **Step 3: Remove generated local dependencies before security scan**
 
 Run from repo root:
 
@@ -1059,7 +1059,7 @@ Run from repo root:
 rtk rm -rf apps/mobile/node_modules services/api/.venv services/api/.pytest_cache services/api/app/__pycache__ services/api/app/core/__pycache__ services/api/app/services/__pycache__ services/api/app/services/nutrition/__pycache__ services/api/tests/__pycache__
 ```
 
-- [ ] **Step 4: Run security check**
+- [x] **Step 4: Run security check**
 
 Run:
 
@@ -1069,7 +1069,7 @@ rtk bash scripts/security-check.sh
 
 Expected: `Security check passed.`
 
-- [ ] **Step 5: Inspect final diff**
+- [x] **Step 5: Inspect final diff**
 
 Run:
 
@@ -1081,7 +1081,7 @@ rtk git log --oneline --decorate -8
 
 Expected: no whitespace errors, only intended files changed or committed.
 
-- [ ] **Step 6: Verify no uncommitted verification artifacts remain**
+- [x] **Step 6: Verify no uncommitted verification artifacts remain**
 
 ```bash
 rtk git status --short
@@ -1096,7 +1096,7 @@ Expected: no generated dependency directories, caches, APKs, or accidental files
 **Files:**
 - Android build outputs generated outside committed source
 
-- [ ] **Step 1: Build release APK from ALIS-HEALTH mobile source**
+- [x] **Step 1: Build release APK from ALIS-HEALTH mobile source**
 
 Run from `apps/mobile/android` if Android project is present:
 
@@ -1106,7 +1106,7 @@ rtk ./gradlew assembleRelease
 
 Expected: release APK builds successfully.
 
-- [ ] **Step 2: Install on connected phone**
+- [x] **Step 2: Install on connected phone**
 
 Run:
 
@@ -1117,7 +1117,7 @@ rtk adb install -r app/build/outputs/apk/release/app-release.apk
 
 Expected: `Success`.
 
-- [ ] **Step 3: Manual acceptance**
+- [x] **Step 3: Manual acceptance**
 
 On device:
 

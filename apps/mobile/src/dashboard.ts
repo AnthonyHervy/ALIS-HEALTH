@@ -1,7 +1,20 @@
 import { DEVICE_NAME } from './config';
 import { formatActivityLabel, formatDuration, formatParisDateTime } from './format';
 import type { AppLanguage } from './i18n';
-import type { CoachAction, CoachAdvicePayload, DashboardData, LifeBalanceScores, MorningContext, OverviewContext, Settings, SourceDiagnostics, SourceDiagnosticMetric, WindowKey } from './types';
+import type {
+  CoachAction,
+  CoachAdvicePayload,
+  DashboardData,
+  DataReliabilitySummary,
+  LifeBalanceScores,
+  MetricReliabilitySummary,
+  MorningContext,
+  OverviewContext,
+  Settings,
+  SourceDiagnostics,
+  SourceDiagnosticMetric,
+  WindowKey
+} from './types';
 
 export function overviewForWindow(dashboard: DashboardData, window: WindowKey): OverviewContext {
   if (window === '24h') {
@@ -278,6 +291,16 @@ export type SourceDiagnosticPresentation = {
   sources: string[];
 };
 
+export type ReliabilityPresentation = {
+  metric: string;
+  title: string;
+  badge: string;
+  tone: 'success' | 'warning' | 'danger' | 'info';
+  selected: string;
+  explanation: string;
+  sources: string[];
+};
+
 export function formatSourceDiagnostics(diagnostics?: SourceDiagnostics | null, language: AppLanguage = 'fr'): SourceDiagnosticPresentation[] {
   if (!diagnostics?.domains) {
     return [];
@@ -314,6 +337,33 @@ export function formatSourceDiagnostics(diagnostics?: SourceDiagnostics | null, 
     }));
 }
 
+export function formatReliabilityMetric(
+  summary: DataReliabilitySummary | undefined | null,
+  metric: string,
+  language: AppLanguage = 'fr'
+): ReliabilityPresentation | null {
+  const item = summary?.metrics?.[metric];
+  if (!item) {
+    return null;
+  }
+  const selected = item.selected_value == null
+    ? language === 'en' ? 'Data not received' : 'Donnée non reçue'
+    : `${language === 'en' ? 'Selected source' : 'Source retenue'} : ${item.selected_source_label}`;
+  return {
+    metric,
+    title: reliabilityMetricTitle(item, language),
+    badge: reliabilityBadge(item.status, language),
+    tone: reliabilityTone(item.status),
+    selected,
+    explanation: item.user_explanation,
+    sources: item.sources.map((source) => `${source.source_label} · ${formatReliabilityValue(source.value ?? null, item.unit ?? source.unit, language)}`)
+  };
+}
+
+export function shouldShowReliabilityBadge(reliability?: ReliabilityPresentation | null): boolean {
+  return Boolean(reliability && reliability.tone !== 'success');
+}
+
 function sourceDiagnosticTitle(metric: SourceDiagnosticMetric, language: AppLanguage): string {
   if (language === 'fr') {
     return metric.label;
@@ -340,6 +390,46 @@ function sourceDiagnosticTitle(metric: SourceDiagnosticMetric, language: AppLang
     return 'VO2 max';
   }
   return metric.label;
+}
+
+function reliabilityBadge(status: MetricReliabilitySummary['status'], language: AppLanguage): string {
+  if (status === 'measured') return language === 'en' ? 'Reliable' : 'Fiable';
+  if (status === 'partial') return language === 'en' ? 'Partial' : 'Partiel';
+  if (status === 'corrected') return language === 'en' ? 'Corrected' : 'Corrigé';
+  return language === 'en' ? 'Check' : 'À vérifier';
+}
+
+function reliabilityTone(status: MetricReliabilitySummary['status']): ReliabilityPresentation['tone'] {
+  if (status === 'measured') return 'success';
+  if (status === 'partial' || status === 'corrected') return 'warning';
+  if (status === 'missing' || status === 'conflict') return 'danger';
+  return 'info';
+}
+
+function reliabilityMetricTitle(item: MetricReliabilitySummary, language: AppLanguage): string {
+  if (item.metric === 'steps') return language === 'en' ? 'Steps' : 'Pas';
+  if (item.metric === 'sleep') return language === 'en' ? 'Sleep' : 'Sommeil';
+  if (item.metric === 'workouts') return language === 'en' ? 'Sport' : 'Sport';
+  if (item.metric === 'active_calories') return language === 'en' ? 'Active calories' : 'Dépense calorique';
+  if (item.metric === 'heart_rate') return language === 'en' ? 'Heart rate' : 'Fréquence cardiaque';
+  if (item.metric === 'hrv') return language === 'en' ? 'Heart rate variability' : 'Variabilité cardiaque';
+  if (item.metric === 'vo2_max') return 'VO2 max';
+  return item.metric;
+}
+
+function formatReliabilityValue(value: number | null, unit: string | null | undefined, language: AppLanguage): string {
+  if (value == null || !Number.isFinite(value)) {
+    return language === 'en' ? 'not received' : 'non reçu';
+  }
+  const locale = language === 'en' ? 'en-US' : 'fr-FR';
+  const rounded = Number.isInteger(value) ? value : Math.round(value * 10) / 10;
+  const formatted = rounded.toLocaleString(locale, { maximumFractionDigits: 1 });
+  if (unit === 'count') return language === 'en' ? `${formatted} steps` : `${formatted} pas`;
+  if (unit === 'session') return language === 'en' ? `${formatted} session${rounded > 1 ? 's' : ''}` : `${formatted} séance${rounded > 1 ? 's' : ''}`;
+  if (unit === 'kcal') return `${formatted} kcal`;
+  if (unit === 'ms') return `${formatted} ms`;
+  if (unit === 'bpm') return `${formatted} bpm`;
+  return unit ? `${formatted} ${unit}` : formatted;
 }
 
 function formatDiagnosticValue(value: number, metric: SourceDiagnosticMetric, language: AppLanguage = 'fr'): string {

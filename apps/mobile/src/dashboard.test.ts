@@ -1,4 +1,4 @@
-import { biometricChartData, biometricSummary, buildLocalCoachAdvice, chartContextForWindow, coachActionsForToday, displayContextForWindow, formatSourceDiagnostics, lifeBalanceForToday, morningInsightForToday, nutritionInsight, overviewForWindow, sleepDetailsForToday, todayCardioInsight, todayWorkoutPresentation, workoutCalorieInsight } from './dashboard';
+import { biometricChartData, biometricSummary, buildLocalCoachAdvice, chartContextForWindow, coachActionsForToday, displayContextForWindow, formatReliabilityMetric, formatSourceDiagnostics, lifeBalanceForToday, morningInsightForToday, nutritionInsight, overviewForWindow, shouldShowReliabilityBadge, sleepDetailsForToday, todayCardioInsight, todayWorkoutPresentation, workoutCalorieInsight } from './dashboard';
 import { healthSyncSummary } from './syncPresentation';
 import type { DashboardData } from './types';
 
@@ -499,6 +499,102 @@ test('formats source diagnostics for user-facing reliability copy', () => {
       sources: []
     }
   ]);
+});
+
+test('formats reliability badge and detail in French without debug terms', () => {
+  const summary = {
+    generated_at: '2026-06-14T12:00:00+00:00',
+    metrics: {
+      steps: {
+        metric: 'steps',
+        domain: 'activity',
+        status: 'corrected',
+        confidence: 'medium',
+        selected_source: 'com.garmin.android.apps.connectmobile',
+        selected_source_label: 'Garmin',
+        selected_value: 15459,
+        unit: 'count',
+        latest_received_at: '2026-06-14T12:00:00+00:00',
+        badge_label: 'Corrige',
+        user_explanation: 'ALIS retient Garmin car la source retenue semblait partielle.',
+        coach_reason: 'ALIS retient Garmin car la source retenue semblait partielle.',
+        sources: [
+          { source: 'android', source_label: 'Android', value: 6000, unit: 'count', latest_received_at: '2026-06-14T08:00:00+00:00', selected: false, note: null },
+          { source: 'com.garmin.android.apps.connectmobile', source_label: 'Garmin', value: 15459, unit: 'count', latest_received_at: '2026-06-14T12:00:00+00:00', selected: true, note: null }
+        ]
+      }
+    }
+  } as const;
+
+  const formatted = formatReliabilityMetric(summary, 'steps', 'fr');
+
+  expect(formatted?.badge).toBe('Corrigé');
+  expect(formatted?.tone).toBe('warning');
+  expect(formatted?.title).toBe('Pas');
+  expect(formatted?.selected).toContain('Garmin');
+  expect(formatted?.sources.join(' ')).not.toMatch(/payload|batch|records|com\.garmin/);
+});
+
+test('formats reliability badge and detail in English', () => {
+  const summary = {
+    generated_at: '2026-06-14T12:00:00+00:00',
+    metrics: {
+      hrv: {
+        metric: 'hrv',
+        domain: 'biometrics',
+        status: 'missing',
+        confidence: 'low',
+        selected_source: null,
+        selected_source_label: 'Auto',
+        selected_value: null,
+        unit: 'ms',
+        latest_received_at: null,
+        badge_label: 'A verifier',
+        user_explanation: 'Variabilite cardiaque pas recue par ALIS pour cette période.',
+        coach_reason: 'HRV not received in ALIS.',
+        sources: []
+      }
+    }
+  } as const;
+
+  const formatted = formatReliabilityMetric(summary, 'hrv', 'en');
+
+  expect(formatted?.badge).toBe('Check');
+  expect(formatted?.title).toBe('Heart rate variability');
+  expect(formatted?.selected).toBe('Data not received');
+});
+
+test('omits reliability badge for high-confidence measured metrics by default', () => {
+  expect(shouldShowReliabilityBadge({
+    metric: 'steps',
+    title: 'Pas',
+    badge: 'Fiable',
+    tone: 'success',
+    selected: 'Source retenue : Garmin',
+    explanation: 'Source complète.',
+    sources: ['Garmin · 12 000 pas']
+  })).toBe(false);
+});
+
+test('shows reliability badge for corrected partial conflict and missing metrics', () => {
+  expect(shouldShowReliabilityBadge({
+    metric: 'steps',
+    title: 'Pas',
+    badge: 'Corrigé',
+    tone: 'warning',
+    selected: 'Source retenue : Garmin',
+    explanation: 'Source corrigée.',
+    sources: []
+  })).toBe(true);
+  expect(shouldShowReliabilityBadge({
+    metric: 'hrv',
+    title: 'Variabilité cardiaque',
+    badge: 'À vérifier',
+    tone: 'danger',
+    selected: 'Donnée non reçue',
+    explanation: 'Aucune donnée reçue.',
+    sources: []
+  })).toBe(true);
 });
 
 test('summarizes mobile sync state with ALIS-facing wording', () => {

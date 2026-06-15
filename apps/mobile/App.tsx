@@ -32,15 +32,18 @@ import {
   biometricSummary,
   chartContextForWindow,
   displayContextForWindow,
+  formatReliabilityMetric,
   formatSourceDiagnostics,
   lifeBalanceForToday,
   morningInsightForToday,
   nutritionInsight,
+  shouldShowReliabilityBadge,
   todayCardioInsight,
   todayWorkoutPresentation,
   workoutCalorieInsight,
   sleepDetailsForToday,
-  type BiometricMetric
+  type BiometricMetric,
+  type ReliabilityPresentation
 } from './src/dashboard';
 import { MAIN_TABS, type MainTab } from './src/navigation';
 import { theme } from './src/theme';
@@ -811,8 +814,21 @@ function DashboardScreen({
   const morningInsight = morningInsightForToday(dashboard, language);
   const chartContext = chartContextForWindow(context, dashboard.windows.week);
   const visibleOrder = useMemo(() => visibleDashboardBlocksForWindow(dashboardOrder, windowKey), [dashboardOrder, windowKey]);
+  const [selectedReliabilityMetric, setSelectedReliabilityMetric] = useState<string | null>(null);
+  const selectedReliability = useMemo(
+    () => (selectedReliabilityMetric ? formatReliabilityMetric(dashboard.data_reliability, selectedReliabilityMetric, language) : null),
+    [dashboard.data_reliability, language, selectedReliabilityMetric]
+  );
+
+  useEffect(() => {
+    setSelectedReliabilityMetric(null);
+  }, [windowKey]);
+
   const handleDragEnd = (params: SortableGridDragEndParams<DashboardBlockKey>) => {
     onReorderVisible(params.data);
+  };
+  const toggleReliabilityMetric = (metric: string) => {
+    setSelectedReliabilityMetric((current) => current === metric ? null : metric);
   };
   const renderBlock = (key: DashboardBlockKey) => {
     if (key === 'scores' && windowKey === '24h') {
@@ -837,7 +853,17 @@ function DashboardScreen({
       return <DailyCoachCta onOpen={onAnalyzeToday} copy={copy} />;
     }
     if (key === 'today' && windowKey === '24h') {
-      return <TodayStrip context={todayContext} sleepDetails={sleepDetails} copy={copy} language={language} />;
+      return (
+        <TodayStrip
+          context={todayContext}
+          sleepDetails={sleepDetails}
+          reliabilitySummary={dashboard.data_reliability}
+          selectedReliabilityMetric={selectedReliabilityMetric}
+          onReliabilityPress={toggleReliabilityMetric}
+          copy={copy}
+          language={language}
+        />
+      );
     }
     if (key === 'summary') {
       return <SummaryCards context={context} copy={copy} language={language} />;
@@ -892,6 +918,14 @@ function DashboardScreen({
         ]}
         onChange={setWindowKey}
       />
+      {selectedReliability ? (
+        <ReliabilityPanel
+          reliability={selectedReliability}
+          closeLabel={language === 'en' ? 'Close reliability details' : 'Fermer le détail de fiabilité'}
+          copy={copy}
+          onClose={() => setSelectedReliabilityMetric(null)}
+        />
+      ) : null}
       <Sortable.Layer>
         <View style={styles.sortableGridWrap}>
           <Sortable.Grid
@@ -1119,17 +1153,28 @@ function DailyCoachCta({ onOpen, copy }: { onOpen: () => void; copy: (key: Trans
 function TodayStrip({
   context,
   sleepDetails,
+  reliabilitySummary,
+  selectedReliabilityMetric,
+  onReliabilityPress,
   copy,
   language
 }: {
   context: OverviewContext;
   sleepDetails: ReturnType<typeof sleepDetailsForToday>;
+  reliabilitySummary?: DashboardData['data_reliability'];
+  selectedReliabilityMetric: string | null;
+  onReliabilityPress: (metric: string) => void;
   copy: (key: TranslationKey) => string;
   language: AppLanguage;
 }) {
   const hasSleep = sleepDetails.durationMinutes > 0;
   const workout = todayWorkoutPresentation(context, language);
   const cardio = todayCardioInsight(context, language);
+  const sleepReliability = formatReliabilityMetric(reliabilitySummary, 'sleep', language);
+  const stepsReliability = formatReliabilityMetric(reliabilitySummary, 'steps', language);
+  const sportReliability = formatReliabilityMetric(reliabilitySummary, 'workouts', language);
+  const caloriesReliability = formatReliabilityMetric(reliabilitySummary, 'active_calories', language);
+  const cardioReliability = formatReliabilityMetric(reliabilitySummary, 'heart_rate', language);
   return (
     <View style={styles.todayGrid}>
       <MetricTile
@@ -1137,16 +1182,25 @@ function TodayStrip({
         value={hasSleep ? formatDuration(sleepDetails.durationMinutes) : '--'}
         detail={hasSleep && sleepDetails.startTime && sleepDetails.endTime ? `${formatParisDateTime(sleepDetails.startTime)} -> ${formatParisTime(sleepDetails.endTime)} · ${sleepDetails.awakenings} ${language === 'en' ? 'wake-up(s)' : 'réveil(s)'}` : copy('dashboard.sleepMissing')}
         tone={hasSleep ? sleepTone(sleepDetails.durationMinutes) : undefined}
+        reliability={sleepReliability}
+        reliabilityActive={selectedReliabilityMetric === 'sleep'}
+        onReliabilityPress={onReliabilityPress}
       />
       <MetricTile
         label={copy('dashboard.stepsSinceWake')}
         value={context.activity.steps.toLocaleString(language === 'en' ? 'en-US' : 'fr-FR')}
         detail={context.activity.source ? `${language === 'en' ? 'source' : 'source'} ${context.activity.source}` : copy('dashboard.autoSource')}
+        reliability={stepsReliability}
+        reliabilityActive={selectedReliabilityMetric === 'steps'}
+        onReliabilityPress={onReliabilityPress}
       />
       <MetricTile
         label={copy('dashboard.sportToday')}
         value={workout.value}
         detail={workout.detail}
+        reliability={sportReliability}
+        reliabilityActive={selectedReliabilityMetric === 'workouts'}
+        onReliabilityPress={onReliabilityPress}
       />
       {workout.calorie ? (
         <MetricTile
@@ -1154,6 +1208,9 @@ function TodayStrip({
           value={workout.calorie.value}
           detail={context.window === '24h' ? copy('dashboard.receivedDataBased') : copy('dashboard.windowAverage')}
           tone="success"
+          reliability={caloriesReliability}
+          reliabilityActive={selectedReliabilityMetric === 'active_calories'}
+          onReliabilityPress={onReliabilityPress}
         />
       ) : null}
       {cardio ? (
@@ -1162,6 +1219,9 @@ function TodayStrip({
           value={cardio.value}
           detail={cardio.detail}
           tone="info"
+          reliability={cardioReliability}
+          reliabilityActive={selectedReliabilityMetric === 'heart_rate'}
+          onReliabilityPress={onReliabilityPress}
         />
       ) : null}
     </View>
@@ -1222,14 +1282,88 @@ function NutritionDetails({ context, onAskCoach, language }: { context: Overview
   );
 }
 
-function MetricTile({ label, value, detail, tone }: { label: string; value: string; detail: string; tone?: 'danger' | 'warning' | 'success' | 'info' }) {
+function ReliabilityPanel({
+  reliability,
+  closeLabel,
+  copy,
+  onClose
+}: {
+  reliability: ReliabilityPresentation;
+  closeLabel: string;
+  copy: (key: TranslationKey) => string;
+  onClose: () => void;
+}) {
   return (
-    <View style={styles.metricTile}>
-      <Text style={styles.metricLabel}>{label}</Text>
+    <View style={styles.card}>
+      <View style={styles.cardHeaderRow}>
+        <View style={styles.flex}>
+          <Text style={styles.eyebrow}>{copy('reliability.title')}</Text>
+          <Text style={styles.cardTitle}>{reliability.title}</Text>
+        </View>
+        <View style={styles.reliabilityHeaderActions}>
+          <Text style={[styles.reliabilityBadge, reliabilityBadgeStyle(reliability.tone)]}>{reliability.badge}</Text>
+          <Pressable accessibilityLabel={closeLabel} style={styles.reliabilityCloseButton} onPress={onClose}>
+            <Text style={styles.reliabilityCloseText}>×</Text>
+          </Pressable>
+        </View>
+      </View>
+      <Text style={styles.metricDetail}>{reliability.selected}</Text>
+      <Text style={styles.bodyText}>{reliability.explanation}</Text>
+      {reliability.sources.length ? (
+        <View style={styles.reliabilitySourcesBlock}>
+          <Text style={styles.metricLabel}>{copy('reliability.sourcesCompared')}</Text>
+          {reliability.sources.map((source) => (
+            <Text key={source} style={styles.reliabilitySourceItem}>{source}</Text>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  detail,
+  tone,
+  reliability,
+  reliabilityActive,
+  onReliabilityPress
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: 'danger' | 'warning' | 'success' | 'info';
+  reliability?: ReliabilityPresentation | null;
+  reliabilityActive?: boolean;
+  onReliabilityPress?: (metric: string) => void;
+}) {
+  const showReliability = shouldShowReliabilityBadge(reliability);
+  return (
+    <View style={[styles.metricTile, reliabilityActive && styles.metricTileActive]}>
+      <View style={styles.metricHeaderRow}>
+        <Text style={styles.metricLabel}>{label}</Text>
+        {showReliability && reliability && onReliabilityPress ? (
+          <Pressable
+            accessibilityLabel={reliability.title}
+            style={[styles.reliabilityBadge, reliabilityBadgeStyle(reliability.tone), reliabilityActive && styles.reliabilityBadgeActive]}
+            onPress={() => onReliabilityPress(reliability.metric)}
+          >
+            <Text style={[styles.reliabilityBadgeText, reliabilityActive && styles.reliabilityBadgeTextActive]}>{reliability.badge}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <Text style={[styles.metricValue, tone ? styles[`tone_${tone}`] : null]}>{value}</Text>
       <Text style={styles.metricDetail} numberOfLines={3}>{detail}</Text>
     </View>
   );
+}
+
+function reliabilityBadgeStyle(tone: ReliabilityPresentation['tone']) {
+  if (tone === 'success') return styles.reliabilityBadge_success;
+  if (tone === 'warning') return styles.reliabilityBadge_warning;
+  if (tone === 'danger') return styles.reliabilityBadge_danger;
+  return styles.reliabilityBadge_info;
 }
 
 function ChartCard({ title, context, metric, large = false, copy, language }: { title: string; context: OverviewContext; metric: ChartMetric; large?: boolean; copy: (key: TranslationKey) => string; language: AppLanguage }) {
@@ -2365,6 +2499,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12
   },
+  reliabilityHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
   flex: {
     flex: 1
   },
@@ -2441,6 +2580,16 @@ const styles = StyleSheet.create({
     padding: 12,
     justifyContent: 'space-between'
   },
+  metricTileActive: {
+    borderColor: theme.colors.brand,
+    backgroundColor: '#f8fffd'
+  },
+  metricHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10
+  },
   metricLabel: {
     color: '#64748b',
     fontSize: 12,
@@ -2455,6 +2604,61 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 12,
     lineHeight: 16
+  },
+  reliabilityBadge: {
+    minHeight: 24,
+    borderRadius: theme.radii.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  reliabilityBadge_success: {
+    backgroundColor: '#dcfce7'
+  },
+  reliabilityBadge_warning: {
+    backgroundColor: '#fef3c7'
+  },
+  reliabilityBadge_danger: {
+    backgroundColor: '#fee2e2'
+  },
+  reliabilityBadge_info: {
+    backgroundColor: '#dbeafe'
+  },
+  reliabilityBadgeActive: {
+    backgroundColor: theme.colors.brand
+  },
+  reliabilityBadgeText: {
+    color: '#0f172a',
+    fontSize: 11,
+    fontWeight: '900'
+  },
+  reliabilityBadgeTextActive: {
+    color: '#ffffff'
+  },
+  reliabilityCloseButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#dbe5ee',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff'
+  },
+  reliabilityCloseText: {
+    color: theme.colors.textSoft,
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20
+  },
+  reliabilitySourcesBlock: {
+    gap: 6
+  },
+  reliabilitySourceItem: {
+    color: theme.colors.textSoft,
+    fontSize: 13,
+    lineHeight: 18
   },
   tone_danger: {
     color: '#b91c1c'
