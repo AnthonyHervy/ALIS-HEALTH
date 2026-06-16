@@ -301,6 +301,43 @@ export type ReliabilityPresentation = {
   sources: string[];
 };
 
+export function humanSourceLabel(source?: string | null, fallback?: string | null, language: AppLanguage = 'fr'): string {
+  const rawSource = (source ?? '').trim();
+  const rawFallback = (fallback ?? '').trim();
+  const value = `${rawSource} ${rawFallback}`.toLowerCase();
+  if (!rawSource && !rawFallback) {
+    return 'Auto';
+  }
+  if (value.includes('garmin')) {
+    return 'Garmin';
+  }
+  if (value.includes('ultrahuman')) {
+    return 'Ultrahuman';
+  }
+  if (value.includes('google')) {
+    return 'Google Fit';
+  }
+  if (value.includes('fitbit')) {
+    return 'Fitbit';
+  }
+  if (value.includes('samsung')) {
+    return 'Samsung Health';
+  }
+  if (value.includes('withings')) {
+    return 'Withings';
+  }
+  if (value.includes('whoop') || value.includes('noop')) {
+    return 'Whoop';
+  }
+  if (value === 'android' || value.includes('android.healthconnect.phone') || value.includes('healthconnect.phone')) {
+    return language === 'en' ? 'Phone' : 'Téléphone';
+  }
+  if (rawFallback && !rawFallback.includes('.') && !rawFallback.includes('/')) {
+    return rawFallback;
+  }
+  return language === 'en' ? 'Android source' : 'Source Android';
+}
+
 export function formatSourceDiagnostics(diagnostics?: SourceDiagnostics | null, language: AppLanguage = 'fr'): SourceDiagnosticPresentation[] {
   if (!diagnostics?.domains) {
     return [];
@@ -325,16 +362,22 @@ export function formatSourceDiagnostics(diagnostics?: SourceDiagnostics | null, 
       seen.add(key);
       return true;
     })
-    .map((metric) => ({
-      title: sourceDiagnosticTitle(metric, language),
-      selected: metric.status === 'received' && metric.selected_source_label
-        ? language === 'en' ? `Selected source: ${metric.selected_source_label}` : `Source retenue : ${metric.selected_source_label}`
-        : language === 'en' ? 'Data not received' : 'Donnée non reçue',
-      latest: `${language === 'en' ? 'Latest data received' : 'Dernière donnée reçue'} : ${metric.latest_received_at ? formatParisDateTime(metric.latest_received_at) : language === 'en' ? 'not received' : 'non reçu'}`,
-      sources: metric.sources.map((source) => language === 'en'
-        ? `${source.source_label} wrote ${formatDiagnosticValue(source.total, metric, language)}`
-        : `${source.source_label} a écrit ${formatDiagnosticValue(source.total, metric, language)}`)
-    }));
+    .map((metric) => {
+      const selectedLabel = humanSourceLabel(metric.selected_source, metric.selected_source_label, language);
+      return {
+        title: sourceDiagnosticTitle(metric, language),
+        selected: metric.status === 'received' && metric.selected_source_label
+          ? language === 'en' ? `Selected source: ${selectedLabel}` : `Source retenue : ${selectedLabel}`
+          : language === 'en' ? 'Data not received' : 'Donnée non reçue',
+        latest: `${language === 'en' ? 'Latest data received' : 'Dernière donnée reçue'} : ${metric.latest_received_at ? formatParisDateTime(metric.latest_received_at) : language === 'en' ? 'not received' : 'non reçu'}`,
+        sources: metric.sources.map((source) => {
+          const label = humanSourceLabel(source.source, source.source_label, language);
+          return language === 'en'
+            ? `${label} wrote ${formatDiagnosticValue(source.total, metric, language)}`
+            : `${label} a écrit ${formatDiagnosticValue(source.total, metric, language)}`;
+        })
+      };
+    });
 }
 
 export function formatReliabilityMetric(
@@ -346,9 +389,10 @@ export function formatReliabilityMetric(
   if (!item) {
     return null;
   }
+  const selectedLabel = humanSourceLabel(item.selected_source, item.selected_source_label, language);
   const selected = item.selected_value == null
     ? language === 'en' ? 'Data not received' : 'Donnée non reçue'
-    : `${language === 'en' ? 'Selected source' : 'Source retenue'} : ${item.selected_source_label}`;
+    : `${language === 'en' ? 'Selected source' : 'Source retenue'} : ${selectedLabel}`;
   return {
     metric,
     title: reliabilityMetricTitle(item, language),
@@ -356,7 +400,7 @@ export function formatReliabilityMetric(
     tone: reliabilityTone(item.status),
     selected,
     explanation: item.user_explanation,
-    sources: item.sources.map((source) => `${source.source_label} · ${formatReliabilityValue(source.value ?? null, item.unit ?? source.unit, language)}`)
+    sources: item.sources.map((source) => `${humanSourceLabel(source.source, source.source_label, language)} · ${formatReliabilityValue(source.value ?? null, item.unit ?? source.unit, language)}`)
   };
 }
 

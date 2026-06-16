@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from app.services.sources import (
     SourceConfigService,
     build_data_reliability_summary,
+    display_source,
     selected_raw_daily_sums,
 )
 
@@ -31,6 +32,13 @@ def metric(
         ),
         "sources": sources,
     }
+
+
+def test_display_source_uses_human_labels_for_known_integrations():
+    assert display_source("com.android.healthconnect.phone.jb") == "Phone"
+    assert display_source("noop.whoop.sync") == "Whoop"
+    assert display_source("com.fitbit.FitbitMobile") == "Fitbit"
+    assert display_source("com.samsung.android.app.shealth") == "Samsung Health"
 
 
 def test_selected_raw_daily_sums_handles_timezone_aware_window_start():

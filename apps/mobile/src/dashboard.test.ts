@@ -435,7 +435,8 @@ test('formats source diagnostics for user-facing reliability copy', () => {
             sources: [
               { source: 'com.garmin.android.apps.connectmobile', source_label: 'Garmin', total: 17334, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: true },
               { source: 'com.google.android.apps.fitness', source_label: 'Google Fit', total: 13016, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: false },
-              { source: 'android', source_label: 'Android', total: 20204, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: false }
+              { source: 'com.android.healthconnect.phone.jb', source_label: 'com.android.healthconnect.phone.jb', total: 20204, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: false },
+              { source: 'noop.whoop.sync', source_label: 'noop.whoop.sync', total: 12000, records: 1, latest_received_at: '2026-05-19T20:00:00+00:00', selected: false }
             ]
           }
         }
@@ -470,7 +471,8 @@ test('formats source diagnostics for user-facing reliability copy', () => {
       sources: [
         'Garmin a écrit 17 334 pas',
         'Google Fit a écrit 13 016 pas',
-        'Android a écrit 20 204 pas'
+        'Téléphone a écrit 20 204 pas',
+        'Whoop a écrit 12 000 pas'
       ]
     },
     {
@@ -489,7 +491,8 @@ test('formats source diagnostics for user-facing reliability copy', () => {
       sources: [
         'Garmin wrote 17,334 steps',
         'Google Fit wrote 13,016 steps',
-        'Android wrote 20,204 steps'
+        'Phone wrote 20,204 steps',
+        'Whoop wrote 12,000 steps'
       ]
     },
     {

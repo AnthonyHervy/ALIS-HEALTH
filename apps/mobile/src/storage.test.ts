@@ -14,7 +14,19 @@ jest.mock('expo-secure-store', () => {
 
 import * as SecureStore from 'expo-secure-store';
 
-import { loadDashboardOrder, loadLastWorkoutNotificationKey, loadSettings, loadUserProfile, saveDashboardOrder, saveLastWorkoutNotificationKey, saveSettings, saveUserProfile } from './storage';
+import {
+  clearCoachChatHistory,
+  loadCoachChatHistory,
+  loadDashboardOrder,
+  loadLastWorkoutNotificationKey,
+  loadSettings,
+  loadUserProfile,
+  saveCoachChatHistory,
+  saveDashboardOrder,
+  saveLastWorkoutNotificationKey,
+  saveSettings,
+  saveUserProfile
+} from './storage';
 
 const secureStoreValues = (SecureStore as unknown as { __values: Map<string, string> }).__values;
 
@@ -113,4 +125,35 @@ test('persists the user profile used by coach context', async () => {
     weightKg: '82',
     heightCm: '181'
   });
+});
+
+test('persists compact local coach chat history without transient loading messages', async () => {
+  await saveCoachChatHistory([
+    { role: 'user', content: 'Analyse mes donnees du jour', hidden: true },
+    { role: 'assistant', content: '', loadingLabel: 'Generation' },
+    { role: 'assistant', content: 'Bonne base aujourd’hui, garde une sortie facile.' }
+  ]);
+
+  expect(JSON.parse(secureStoreValues.get('alis.coachChatHistory') ?? '[]')).toEqual([
+    { role: 'user', content: 'Analyse mes donnees du jour', hidden: true },
+    { role: 'assistant', content: 'Bonne base aujourd’hui, garde une sortie facile.' }
+  ]);
+  await expect(loadCoachChatHistory()).resolves.toEqual([
+    { role: 'user', content: 'Analyse mes donnees du jour', hidden: true },
+    { role: 'assistant', content: 'Bonne base aujourd’hui, garde une sortie facile.' }
+  ]);
+});
+
+test('limits and clears local coach chat history', async () => {
+  await saveCoachChatHistory(Array.from({ length: 35 }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `message ${index + 1}`
+  })));
+
+  const history = await loadCoachChatHistory();
+  expect(history).toHaveLength(30);
+  expect(history[0].content).toBe('message 6');
+
+  await clearCoachChatHistory();
+  await expect(loadCoachChatHistory()).resolves.toEqual([]);
 });

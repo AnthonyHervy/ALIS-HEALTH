@@ -586,8 +586,8 @@ async def test_dashboard_exposes_health_connect_source_diagnostics(test_app):
     assert by_label["Garmin"]["selected"] is True
     assert by_label["Google Fit"]["total"] == 13016
     assert by_label["Google Fit"]["selected"] is False
-    assert by_label["Android"]["total"] == 20204
-    assert by_label["Android"]["selected"] is False
+    assert by_label["Phone"]["total"] == 20204
+    assert by_label["Phone"]["selected"] is False
 
     hrv = diagnostics["domains"]["biometrics"]["metrics"]["hrv"]
     assert hrv["status"] == "not_received"

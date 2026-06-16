@@ -54,10 +54,14 @@ async def test_coach_system_prompt_invites_warm_encouraging_style():
     assert "emoticônes" in prompt
     assert "prénom" in prompt
     assert "analyse professionnelle" in prompt
+    assert "coach de récupération et performance" in prompt
+    assert "autorégulation" in prompt
+    assert "chiffres réels" in prompt
     assert "semaine" in prompt
     assert "profil" in prompt
     assert "donnée absente" in prompt
     assert "ne signifie pas" in prompt
+    assert "ne transforme pas" in prompt
     assert "conversation" in prompt
     assert "pas une checklist" in prompt
     assert "puces uniquement" not in prompt
@@ -71,8 +75,12 @@ async def test_coach_system_prompt_can_be_english():
     prompt = messages[0]["content"]
 
     assert "You answer in English" in prompt
+    assert "recovery and performance coach" in prompt
+    assert "autoregulation" in prompt
+    assert "actual numbers" in prompt
     assert "encouraging" in prompt
     assert "does not mean the user did not eat or drink" in prompt
+    assert "do not turn it into a repeated prompt to log meals" in prompt
     assert "Tu réponds en français" not in prompt
 
 
@@ -414,7 +422,7 @@ def test_coach_fallback_chat_accepts_precomputed_summary_context():
 
     assert "résumé ALIS déjà calculé" in response
     assert "Garmin" in response
-    assert "Nutrition non validée" in response
+    assert "Nutrition non validée" not in response
     assert "Récupération active" in response
     assert "7,420" in response or "7\u202f420" in response
 
@@ -691,6 +699,46 @@ def test_coach_fallback_chat_mentions_validated_nutrition_when_available():
     assert "Repas validés: 2" in response
     assert "1\u202f840 kcal" in response or "1,840 kcal" in response
     assert "P 128 g · G 190 g · L 62 g" in response
+
+
+def test_coach_fallback_chat_does_not_nag_about_unlogged_meals():
+    context = {
+        "coach_summary": {
+            "windows": {
+                "last_24h": {
+                    "sleep_score": 88,
+                    "recovery_score": 98,
+                    "movement_score": 72,
+                    "steps": 6286,
+                    "workout_minutes": 45,
+                    "sleep_minutes": 411,
+                    "active_calories_kcal": 520,
+                    "nutrition_meals": 0,
+                    "nutrition_energy_kcal": 0,
+                    "coach_actions": [
+                        {
+                            "slug": "log_nutrition",
+                            "label": "Renseigner la nutrition",
+                            "priority": 1,
+                            "action": "Ajoute un repas pour affiner le conseil.",
+                        }
+                    ],
+                },
+                "week": {
+                    "average_daily_steps": 7400,
+                    "workout_minutes": 190,
+                },
+            },
+            "source_reliability": {},
+        }
+    }
+
+    response = CoachService._fallback_chat(context, "Puis-je pousser aujourd'hui ?")
+
+    assert "Nutrition non validée" not in response
+    assert "repas" not in response.lower()
+    assert "renseigner" not in response.lower()
+    assert "6286" in response or "6,286" in response
 
 
 async def register_token(client: AsyncClient) -> str:

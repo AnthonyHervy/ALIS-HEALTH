@@ -8,11 +8,15 @@ from typing import Any
 COACH_SYSTEM_PROMPT = """Tu es le coach local HealthConnect.
 Tu réponds en français, avec un ton calme, concret, prudent, humain, très encourageant et motivant.
 Tu parles comme un coach qui accompagne vraiment l'utilisateur: chaleureux, simple, jamais sec ni robotique.
+Tu es un coach de récupération et performance avec une vraie méthodologie: autorégulation, surcharge progressive, intensité polarisée environ 80/20, espacement des séances dures, deloads/périodisation, et sommeil comme premier levier de récupération.
+Utilise l'autorégulation: récupération/charge 67-100 = feu vert pour construire ou pousser; 34-66 = maintien, qualité plutôt que volume, effort contrôlé; 0-33 = récupération active uniquement, Zone 2 douce, mobilité et sommeil.
+Tu cites toujours les chiffres réels fournis par ALIS avant de conseiller: sommeil, récupération, mouvement, effort/cardio, HRV, fréquence cardiaque, séance récente ou tendance semaine/mois quand disponibles.
 Si un prénom est fourni dans le profil, tu peux l'utiliser naturellement, sans forcer à chaque phrase.
 Tu peux utiliser 1 à 3 emoticônes sobres quand cela rend la réponse plus chaleureuse, mais jamais au détriment de la clarté.
 Tu fournis une analyse professionnelle: relie les données des dernières 24h, de la semaine, du mois, du profil utilisateur et des objectifs actifs.
 Tu évites les conseils génériques: explique le mécanisme probable, le niveau de confiance, puis donne une action concrète adaptée au contexte.
 Une donnée absente, nutrition non renseignée ou hydratation à 0 L dans le contexte ne signifie pas que l'utilisateur ne mange pas ou ne boit pas; dis plutôt que la donnée n'est pas renseignée/validée.
+Quand les repas ne sont pas renseignés, ne transforme pas cela en relance répétée pour enregistrer des repas; mentionne-le seulement si c'est directement utile, comme limite de contexte, et donne d'abord un conseil possible sans exiger de saisie.
 Tu utilises les données fournies dans le contexte et tu n'inventes jamais de métriques.
 Tu n'es pas médecin et tu ne poses pas de diagnostic.
 Si le sujet touche fatigue persistante, douleur, malaise, trouble sévère du sommeil, perte de poids extrême, médicament ou pathologie, conseille un avis médical qualifié.
@@ -32,11 +36,15 @@ Format mobile conversationnel:
 COACH_SYSTEM_PROMPT_EN = """You are the local HealthConnect coach.
 You answer in English, with a calm, concrete, careful, human, highly encouraging and motivating tone.
 You speak like a coach who is genuinely supporting the user: warm, simple, never dry or robotic.
+You are an elite recovery and performance coach with a real training methodology: autoregulation, progressive overload, polarised ~80/20 intensity, spacing hard sessions, deloads/periodisation, and sleep as the biggest recovery lever.
+Use autoregulation: recovery/readiness 67-100 = green light to build or push; 34-66 = maintain, quality over volume, controlled effort; 0-33 = active recovery only, easy Zone 2, mobility and extra sleep.
+Always cite the user's actual numbers from ALIS before advising: sleep, recovery, movement, effort/cardio, HRV, heart rate, recent workout or week/month trend when available.
 If a first name is provided in the profile, you may use it naturally, without forcing it into every sentence.
 You may use 1 to 3 subtle emoticons when it makes the answer warmer, but never at the expense of clarity.
 You provide a professional analysis: connect data from the last 24h, week, month, user profile and active goals.
 Avoid generic advice: explain the likely mechanism, confidence level, then give one concrete action adapted to the context.
 Missing data, unlogged nutrition or hydration at 0 L in context does not mean the user did not eat or drink; say the data was not logged/validated.
+When meals are not logged, do not turn it into a repeated prompt to log meals; mention it only if directly useful as a context limitation, then give advice that still works without asking the user to enter food.
 Use only the data provided in context and never invent metrics.
 You are not a doctor and you do not diagnose.
 If the topic involves persistent fatigue, pain, faintness, severe sleep issues, extreme weight loss, medication or pathology, recommend qualified medical advice.
@@ -286,7 +294,7 @@ class CoachService:
                 "Concise conversational mobile answer: 2 to 4 short paragraphs, no table, no HTML, not a checklist. "
                 "A mini-list of 2 or 3 actions is possible only if it makes the advice clearer. "
                 "Give an integrated read like a professional coach: 24h + week + profile + goals, then concrete priorities. "
-                "If nutrition or hydration are 0/not logged, present it as a data limitation, never as proof that the user does not eat or drink."
+                "If nutrition or hydration are 0/not logged, present it as a data limitation only when directly useful, never as proof that the user does not eat or drink, and do not push meal logging as the main advice."
             )
         if mode == "plan":
             return (
@@ -298,7 +306,7 @@ class CoachService:
             "Réponse concise et conversationnelle pour mobile: 2 à 4 paragraphes courts, sans tableau, sans HTML, pas une checklist. "
             "Une mini-liste de 2 ou 3 actions est possible seulement si elle rend le conseil plus clair. "
             "Fais une lecture intégrée comme un coach professionnel: 24h + semaine + profil + objectifs, puis priorités concrètes. "
-            "Si nutrition ou hydratation sont à 0/non renseignées, présente cela comme une limite de données, jamais comme une preuve que l'utilisateur ne mange ou ne boit pas."
+            "Si nutrition ou hydratation sont à 0/non renseignées, présente cela comme une limite de données seulement quand c'est vraiment utile, jamais comme une preuve que l'utilisateur ne mange ou ne boit pas, et ne pousse pas la saisie repas comme conseil principal."
         )
 
     @staticmethod
@@ -522,7 +530,7 @@ class CoachService:
             scores.append(f"{'movement' if language == 'en' else 'mouvement'} {last_24h.get('movement_score')} / 100")
         score_line = ", ".join(scores) if scores else ("scores not calculated yet" if language == "en" else "scores non calculés pour le moment")
 
-        nutrition_line = "Nutrition not validated in ALIS for this window." if language == "en" else "Nutrition non validée dans ALIS sur cette fenêtre."
+        nutrition_line = ""
         if int(last_24h.get("nutrition_meals") or 0) > 0:
             nutrition_line = (
                 f"{int(last_24h.get('nutrition_meals') or 0)} validated meal(s), "
@@ -607,8 +615,8 @@ class CoachService:
                 f"Over 7 days, the average is {int(week.get('average_daily_steps') or 0):,} steps/day and "
                 f"{int(week.get('workout_minutes') or 0)} min of sport.\n\n"
                 f"Sleep: {int(last_24h.get('sleep_minutes') or 0)} min. "
-                f"Active calories: {int(round(float(last_24h.get('active_calories_kcal') or 0))):,} kcal. "
-                f"{nutrition_line}"
+                f"Active calories: {int(round(float(last_24h.get('active_calories_kcal') or 0))):,} kcal."
+                f"{f' {nutrition_line}' if nutrition_line else ''}"
                 f"{actions_block}\n\n"
                 f"Question received: {message}"
             )
@@ -620,8 +628,8 @@ class CoachService:
             f"Sur 7 jours, la moyenne est à {int(week.get('average_daily_steps') or 0):,} pas/j et "
             f"{int(week.get('workout_minutes') or 0)} min de sport.\n\n"
             f"Sommeil: {int(last_24h.get('sleep_minutes') or 0)} min. "
-            f"Calories actives: {int(round(float(last_24h.get('active_calories_kcal') or 0))):,} kcal. "
-            f"{nutrition_line}"
+            f"Calories actives: {int(round(float(last_24h.get('active_calories_kcal') or 0))):,} kcal."
+            f"{f' {nutrition_line}' if nutrition_line else ''}"
             f"{actions_block}\n\n"
             f"Question reçue: {message}"
         )
@@ -632,4 +640,18 @@ class CoachService:
         if not last_24h:
             last_24h = ((context.get("coach_summary") or {}).get("windows") or {}).get("last_24h") or {}
         actions = last_24h.get("coach_actions") or []
+        nutrition = last_24h.get("nutrition") or {}
+        nutrition_meals = int(nutrition.get("meals") or last_24h.get("nutrition_meals") or 0)
+        if nutrition_meals <= 0:
+            def is_nutrition_prompt(item: dict[str, Any]) -> bool:
+                text = " ".join(
+                    str(item.get(key) or "").lower()
+                    for key in ("slug", "label", "action", "reason")
+                )
+                return any(keyword in text for keyword in ("nutrition", "repas", "meal"))
+
+            actions = [
+                item for item in actions
+                if not is_nutrition_prompt(item)
+            ]
         return sorted(actions, key=lambda item: item.get("priority") or 99)[:3]

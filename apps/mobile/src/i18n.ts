@@ -134,7 +134,13 @@ const fr = {
   'coach.generating': 'Génération de la réponse',
   'coach.inputPlaceholder': 'Écris au coach...',
   'coach.you': 'Vous',
-  'coach.coach': 'Coach'
+  'coach.coach': 'Coach',
+  'coach.clearHistory': 'Effacer',
+  'coach.clearHistoryTitle': 'Effacer la conversation ?',
+  'coach.clearHistoryMessage': "ALIS supprimera uniquement l'historique local du coach sur ce téléphone.",
+  'coach.clearHistoryCancel': 'Annuler',
+  'coach.clearHistoryConfirm': 'Effacer',
+  'coach.historyCleared': 'Conversation coach effacée.'
 } as const;
 
 const en: Record<keyof typeof fr, string> = {
@@ -268,7 +274,13 @@ const en: Record<keyof typeof fr, string> = {
   'coach.generating': 'Generating the answer',
   'coach.inputPlaceholder': 'Ask the coach...',
   'coach.you': 'You',
-  'coach.coach': 'Coach'
+  'coach.coach': 'Coach',
+  'coach.clearHistory': 'Clear',
+  'coach.clearHistoryTitle': 'Clear the conversation?',
+  'coach.clearHistoryMessage': 'ALIS will only delete the local coach history on this phone.',
+  'coach.clearHistoryCancel': 'Cancel',
+  'coach.clearHistoryConfirm': 'Clear',
+  'coach.historyCleared': 'Coach conversation cleared.'
 };
 
 const dictionary: Record<AppLanguage, Record<keyof typeof fr, string>> = { fr, en };

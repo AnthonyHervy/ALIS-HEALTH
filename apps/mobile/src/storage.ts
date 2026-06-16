@@ -5,7 +5,8 @@ import { DEFAULT_API_BASE_URL, DEFAULT_PAIRING_CODE } from './config';
 import { normalizeDashboardOrder, type DashboardBlockKey } from './dashboardLayout';
 import { normalizeLanguagePreference } from './i18n';
 import { EMPTY_USER_PROFILE, normalizeUserProfile, type UserProfile } from './userProfile';
-import type { Settings } from './types';
+import { normalizeCoachChatHistory } from './coachHistory';
+import type { CoachChatMessage, Settings } from './types';
 
 const API_URL_KEY = 'alis.apiBaseUrl';
 const PAIRING_CODE_KEY = 'alis.pairingCode';
@@ -15,6 +16,7 @@ const LANGUAGE_KEY = 'alis.language';
 const DASHBOARD_ORDER_KEY = 'alis.dashboardOrder';
 const LAST_WORKOUT_NOTIFICATION_KEY = 'alis.lastWorkoutNotificationKey';
 const USER_PROFILE_KEY = 'alis.userProfile';
+const COACH_CHAT_HISTORY_KEY = 'alis.coachChatHistory';
 
 export async function loadSettings(): Promise<Settings> {
   const [apiBaseUrl, pairingCode, deviceToken, notificationsEnabled, language] = await Promise.all([
@@ -94,4 +96,29 @@ export async function loadUserProfile(): Promise<UserProfile> {
 
 export async function saveUserProfile(profile: UserProfile): Promise<void> {
   await SecureStore.setItemAsync(USER_PROFILE_KEY, JSON.stringify(normalizeUserProfile(profile)));
+}
+
+export async function loadCoachChatHistory(): Promise<CoachChatMessage[]> {
+  const raw = await SecureStore.getItemAsync(COACH_CHAT_HISTORY_KEY);
+  if (!raw) {
+    return [];
+  }
+  try {
+    return normalizeCoachChatHistory(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCoachChatHistory(messages: readonly CoachChatMessage[]): Promise<void> {
+  const normalized = normalizeCoachChatHistory(messages);
+  if (normalized.length === 0) {
+    await SecureStore.deleteItemAsync(COACH_CHAT_HISTORY_KEY);
+    return;
+  }
+  await SecureStore.setItemAsync(COACH_CHAT_HISTORY_KEY, JSON.stringify(normalized));
+}
+
+export async function clearCoachChatHistory(): Promise<void> {
+  await SecureStore.deleteItemAsync(COACH_CHAT_HISTORY_KEY);
 }

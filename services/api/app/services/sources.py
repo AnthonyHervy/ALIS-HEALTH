@@ -173,8 +173,16 @@ def display_source(source: str | None) -> str:
         return "Ultrahuman"
     if "google" in value:
         return "Google Fit"
-    if value == "android":
-        return "Android"
+    if "fitbit" in value:
+        return "Fitbit"
+    if "samsung" in value:
+        return "Samsung Health"
+    if "withings" in value:
+        return "Withings"
+    if "whoop" in value or "noop" in value:
+        return "Whoop"
+    if value == "android" or "android.healthconnect.phone" in value or "healthconnect.phone" in value:
+        return "Phone"
     return source
 
 

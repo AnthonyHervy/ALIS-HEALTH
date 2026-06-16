@@ -78,16 +78,20 @@ import {
   sleepTone
 } from './src/format';
 import {
+  clearCoachChatHistory,
   clearDeviceToken,
+  loadCoachChatHistory,
   loadDashboardOrder,
   loadLastWorkoutNotificationKey,
   loadSettings,
   loadUserProfile,
+  saveCoachChatHistory,
   saveDashboardOrder,
   saveLastWorkoutNotificationKey,
   saveUserProfile as persistUserProfile,
   saveSettings
 } from './src/storage';
+import { coachHistoryForRequest } from './src/coachHistory';
 import { EMPTY_USER_PROFILE, buildCoachMessageWithProfile, normalizeUserProfile, sanitizeUserProfileDraft, type UserProfile, type UserSex } from './src/userProfile';
 import { loadHealthSyncState, runManualHealthSync } from './src/healthSync';
 import { healthSyncSummary } from './src/syncPresentation';
@@ -170,6 +174,7 @@ export default function App() {
   const workoutNotificationReadyRef = useRef(false);
   const workoutAnalysisHandlerRef = useRef<(key?: string | null) => void>(() => undefined);
   const pendingWorkoutAnalysisKeyRef = useRef<string | null | undefined>(undefined);
+  const coachHistoryReadyRef = useRef(false);
   settingsRef.current = settings;
   dashboardRef.current = dashboard;
 
@@ -185,13 +190,15 @@ export default function App() {
   nutritionSettingsKeyRef.current = nutritionSettingsKey;
 
   useEffect(() => {
-    Promise.all([loadSettings(), loadDashboardOrder(), loadLastWorkoutNotificationKey(), loadUserProfile()])
-      .then(async ([loaded, savedDashboardOrder, lastWorkoutNotificationKey, savedUserProfile]) => {
+    Promise.all([loadSettings(), loadDashboardOrder(), loadLastWorkoutNotificationKey(), loadUserProfile(), loadCoachChatHistory()])
+      .then(async ([loaded, savedDashboardOrder, lastWorkoutNotificationKey, savedUserProfile, savedCoachHistory]) => {
         setSettings(loaded);
         setDashboardOrder(savedDashboardOrder);
         lastWorkoutNotificationKeyRef.current = lastWorkoutNotificationKey;
         setUserProfile(savedUserProfile);
         setDraftUserProfile(savedUserProfile);
+        setChatMessages(savedCoachHistory);
+        coachHistoryReadyRef.current = true;
         setDraftApiUrl(loaded.apiBaseUrl);
         setDraftPairingCode(loaded.pairingCode);
         await restoreHealthSyncState(loaded);
@@ -208,6 +215,13 @@ export default function App() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!coachHistoryReadyRef.current) {
+      return;
+    }
+    void saveCoachChatHistory(chatMessages);
+  }, [chatMessages]);
 
   useEffect(() => {
     const morningSubscription = addMorningNotificationResponseListener(() => {
@@ -558,6 +572,21 @@ export default function App() {
     setStatus(language === 'en' ? 'AI coach priorities saved.' : 'Priorités du coach IA enregistrées.');
   }
 
+  function confirmClearCoachHistory() {
+    Alert.alert(copy('coach.clearHistoryTitle'), copy('coach.clearHistoryMessage'), [
+      { text: copy('coach.clearHistoryCancel'), style: 'cancel' },
+      {
+        text: copy('coach.clearHistoryConfirm'),
+        style: 'destructive',
+        onPress: () => {
+          setChatMessages([]);
+          void clearCoachChatHistory();
+          setStatus(copy('coach.historyCleared'));
+        }
+      }
+    ]);
+  }
+
   async function sendCoachMessage(
     prompt = chatInput.trim(),
     options: { hiddenUser?: boolean; loadingLabel?: string } = {}
@@ -568,7 +597,7 @@ export default function App() {
     const coachPrompt = buildCoachMessageWithProfile(prompt, userProfile, language);
     const userMessage: CoachChatMessage = { role: 'user', content: prompt, hidden: options.hiddenUser };
     const assistantMessage: CoachChatMessage = { role: 'assistant', content: '', loadingLabel: options.loadingLabel };
-    setChatMessages((current) => options.hiddenUser ? [...current, assistantMessage] : [...current, userMessage, assistantMessage]);
+    setChatMessages((current) => [...current, userMessage, assistantMessage]);
     if (!options.hiddenUser) {
       void playCoachSound('send');
     }
@@ -576,9 +605,7 @@ export default function App() {
     setCoachStreaming(true);
     setCoachPhase('waking');
     let replySoundPlayed = false;
-    const visibleHistory = chatMessages
-      .filter((message) => !message.hidden)
-      .map(({ role, content }) => ({ role, content }));
+    const history = coachHistoryForRequest(chatMessages);
     try {
       try {
         const status = await api.fetchCoachStatus(settings, async (next) => {
@@ -594,7 +621,7 @@ export default function App() {
           await persistSettings(next);
         },
         message: coachPrompt,
-        history: visibleHistory,
+        history,
         language,
         onDelta: (chunk) => {
           setCoachPhase('streaming');
@@ -690,6 +717,7 @@ export default function App() {
                 isStreaming={coachStreaming}
                 coachPhase={coachPhase}
                 send={sendCoachMessage}
+                clearHistory={confirmClearCoachHistory}
                 copy={copy}
               />
             ) : null}
@@ -1632,6 +1660,7 @@ function CoachScreen({
   isStreaming,
   coachPhase,
   send,
+  clearHistory,
   copy
 }: {
   messages: CoachChatMessage[];
@@ -1640,6 +1669,7 @@ function CoachScreen({
   isStreaming: boolean;
   coachPhase: CoachPhase;
   send: (message?: string) => Promise<void>;
+  clearHistory: () => void;
   copy: (key: TranslationKey) => string;
 }) {
   const scrollRef = useRef<ScrollView | null>(null);
@@ -1652,6 +1682,17 @@ function CoachScreen({
   const visibleMessages = messages.filter((message) => !message.hidden);
   return (
     <View style={styles.coachShell}>
+      {visibleMessages.length > 0 ? (
+        <View style={styles.coachHeaderActions}>
+          <Pressable
+            disabled={isStreaming}
+            style={[styles.coachClearButton, isStreaming && styles.disabledButton]}
+            onPress={clearHistory}
+          >
+            <Text style={styles.coachClearButtonText}>{copy('coach.clearHistory')}</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <ScrollView
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
@@ -2796,6 +2837,22 @@ const styles = StyleSheet.create({
   },
   coachShell: {
     flex: 1
+  },
+  coachHeaderActions: {
+    alignItems: 'flex-end',
+    marginBottom: 8
+  },
+  coachClearButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dbe5ee',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  coachClearButtonText: {
+    color: '#64748b',
+    fontWeight: '800'
   },
   coachWelcomePanel: {
     borderRadius: 8,
