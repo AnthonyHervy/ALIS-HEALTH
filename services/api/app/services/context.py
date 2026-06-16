@@ -549,13 +549,14 @@ class HealthContextService:
         source_config = source_config or await SourceConfigService(self.db).config(user_id)
         payloads = await self._raw_payloads(user_id)
         selected_source = source_config["effective_sources"].get("activity")
+        has_explicit_activity_source = bool((source_config.get("preferred_sources") or {}).get("activity"))
         raw_steps = selected_raw_daily_sums(
             payloads,
             record_type="Steps",
             value_path=["count"],
             selected_source=selected_source,
             start=start,
-            fallback_to_best_source_ratio=STEP_SELECTED_SOURCE_FALLBACK_RATIO,
+            fallback_to_best_source_ratio=None if has_explicit_activity_source else STEP_SELECTED_SOURCE_FALLBACK_RATIO,
         )
         raw_active_calories = selected_raw_daily_sums(
             payloads,
@@ -654,6 +655,7 @@ class HealthContextService:
         source_config = source_config or await SourceConfigService(self.db).config(user_id)
         payloads = await self._raw_payloads(user_id)
         selected_activity_source = source_config["effective_sources"].get("activity")
+        has_explicit_activity_source = bool((source_config.get("preferred_sources") or {}).get("activity"))
         days: defaultdict[str, dict] = defaultdict(
             lambda: {
                 "steps": 0,
@@ -685,7 +687,7 @@ class HealthContextService:
             start=start,
             allowed_days=set(allowed_days),
             day_tz=PARIS,
-            fallback_to_best_source_ratio=STEP_SELECTED_SOURCE_FALLBACK_RATIO,
+            fallback_to_best_source_ratio=None if has_explicit_activity_source else STEP_SELECTED_SOURCE_FALLBACK_RATIO,
         )
         raw_active_calories = selected_raw_daily_sums(
             payloads,
@@ -713,7 +715,7 @@ class HealthContextService:
             for day, value in raw_distance.items():
                 days[day]["distance_meters"] = float(value["total"])
             normalized_activity = await self._normalized_daily_activity(user_id, start, set(allowed_days), selected_activity_source)
-            self._supplement_incomplete_raw_activity(days, normalized_activity)
+            self._supplement_incomplete_raw_activity(days, normalized_activity, selected_activity_source)
         else:
             normalized_activity = await self._normalized_daily_activity(user_id, start, set(allowed_days), selected_activity_source)
             for day, values in normalized_activity.items():
@@ -721,8 +723,9 @@ class HealthContextService:
                 days[day]["active_calories_kcal"] = float(values["active_calories_kcal"])
                 days[day]["distance_meters"] = float(values["distance_meters"])
 
-        best_normalized_steps = await self._best_normalized_steps_by_source(user_id, start, set(allowed_days))
-        self._recover_best_normalized_steps(days, best_normalized_steps)
+        if not has_explicit_activity_source:
+            best_normalized_steps = await self._best_normalized_steps_by_source(user_id, start, set(allowed_days))
+            self._recover_best_normalized_steps(days, best_normalized_steps)
 
         sleep_sessions = await self._selected_sleep_sessions(
             user_id,
@@ -1020,7 +1023,12 @@ class HealthContextService:
             metadata.get("end_time") or timestamp.isoformat(),
         )
 
-    def _supplement_incomplete_raw_activity(self, days: dict[str, dict], normalized_activity: dict[str, dict]) -> None:
+    def _supplement_incomplete_raw_activity(
+        self,
+        days: dict[str, dict],
+        normalized_activity: dict[str, dict],
+        selected_source: str | None = None,
+    ) -> None:
         for day, normalized in normalized_activity.items():
             if day not in days:
                 continue
@@ -1032,6 +1040,8 @@ class HealthContextService:
             ):
                 days[day]["steps"] = normalized_steps
                 days[day]["steps_recovered"] = True
+                if selected_source:
+                    days[day]["steps_source"] = selected_source
             if not days[day].get("active_calories_kcal") and normalized.get("active_calories_kcal"):
                 days[day]["active_calories_kcal"] = float(normalized["active_calories_kcal"])
             if not days[day].get("distance_meters") and normalized.get("distance_meters"):

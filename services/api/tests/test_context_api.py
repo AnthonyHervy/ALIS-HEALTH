@@ -1436,6 +1436,80 @@ async def test_daily_activity_recovers_best_normalized_steps_when_effective_sour
 
 
 @pytest.mark.asyncio
+async def test_daily_activity_keeps_explicit_garmin_step_preference_even_when_other_sources_are_higher(test_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        batch = {
+            "source_type": "healthconnect",
+            "device_name": "Pixel Test",
+            "device_id": "pixel-test-1",
+            "data_start": "2026-06-14T00:00:00+00:00",
+            "data_end": "2026-06-14T18:00:00+00:00",
+            "steps": [
+                {
+                    "start_time": "2026-06-14T08:00:00+00:00",
+                    "end_time": "2026-06-14T18:00:00+00:00",
+                    "count": 6371,
+                    "metadata": {"dataOrigin": "com.garmin.android.apps.connectmobile", "id": "garmin-steps"},
+                },
+                {
+                    "start_time": "2026-06-14T08:00:00+00:00",
+                    "end_time": "2026-06-14T18:00:00+00:00",
+                    "count": 12362,
+                    "metadata": {"dataOrigin": "com.google.android.apps.fitness", "id": "google-steps"},
+                },
+                {
+                    "start_time": "2026-06-14T08:00:00+00:00",
+                    "end_time": "2026-06-14T18:00:00+00:00",
+                    "count": 16843,
+                    "metadata": {"dataOrigin": "com.android.healthconnect.phone.example", "id": "healthconnect-steps"},
+                },
+            ],
+            "raw_records": {
+                "Steps": [
+                    {
+                        "startTime": "2026-06-14T08:00:00+00:00",
+                        "endTime": "2026-06-14T18:00:00+00:00",
+                        "count": 84,
+                        "metadata": {"dataOrigin": "com.garmin.android.apps.connectmobile", "id": "raw-garmin-steps"},
+                    },
+                    {
+                        "startTime": "2026-06-14T08:00:00+00:00",
+                        "endTime": "2026-06-14T18:00:00+00:00",
+                        "count": 12362,
+                        "metadata": {"dataOrigin": "com.google.android.apps.fitness", "id": "raw-google-steps"},
+                    }
+                ]
+            },
+        }
+
+        await client.put(
+            "/api/v1/config/source-preferences",
+            json={"preferences": {"activity": "com.garmin.android.apps.connectmobile"}},
+            headers=headers,
+        )
+        ingested = await client.post("/api/v1/ingest/health", json=batch, headers=headers)
+        response = await client.get("/api/v1/context/overview?window=24h", headers=headers)
+
+    assert ingested.status_code == 200
+    assert response.status_code == 200
+    series = {day["date"]: day for day in response.json()["series"]}
+    assert series["2026-06-14"]["steps"] == 6371
+    assert series["2026-06-14"]["steps_source"] == "com.garmin.android.apps.connectmobile"
+    assert response.json()["activity"]["source"] == "com.garmin.android.apps.connectmobile"
+    assert response.json()["activity"]["steps"] == 6371
+
+
+@pytest.mark.asyncio
 async def test_context_treats_health_connect_swimming_codes_as_training(test_app):
     async with AsyncClient(
         transport=ASGITransport(app=test_app),
