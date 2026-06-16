@@ -1559,6 +1559,71 @@ async def test_context_treats_health_connect_swimming_codes_as_training(test_app
 
 
 @pytest.mark.asyncio
+async def test_context_attaches_total_calories_to_matching_workout(test_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        registered = await client.post(
+            "/api/v1/auth/register",
+            json={"pairing_code": "dev-pairing-code", "device_name": "Pixel"},
+        )
+        token = registered.json()["device_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        batch = {
+            "source_type": "healthconnect",
+            "device_name": "Pixel Test",
+            "device_id": "pixel-test-1",
+            "data_start": "2026-06-16T08:00:00+00:00",
+            "data_end": "2026-06-16T12:00:00+00:00",
+            "workouts": [
+                {
+                    "start_time": "2026-06-16T10:34:58+00:00",
+                    "end_time": "2026-06-16T11:17:00.523000+00:00",
+                    "activity_type": "cycling",
+                    "metadata": {
+                        "id": "rpm-garmin",
+                        "dataOrigin": "com.garmin.android.apps.connectmobile",
+                    },
+                }
+            ],
+            "calories": [
+                {
+                    "start_time": "2026-06-16T10:34:58+00:00",
+                    "end_time": "2026-06-16T11:17:00.523000+00:00",
+                    "calories": 578,
+                    "is_active": True,
+                    "metadata": {
+                        "id": "rpm-active-calories",
+                        "dataOrigin": "com.garmin.android.apps.connectmobile",
+                    },
+                },
+                {
+                    "start_time": "2026-06-16T10:34:58+00:00",
+                    "end_time": "2026-06-16T11:17:00.523000+00:00",
+                    "calories": 643.9215,
+                    "is_active": False,
+                    "metadata": {
+                        "id": "rpm-total-calories",
+                        "dataOrigin": "com.garmin.android.apps.connectmobile",
+                    },
+                },
+            ],
+        }
+
+        ingested = await client.post("/api/v1/ingest/health", json=batch, headers=headers)
+        response = await client.get("/api/v1/context/overview?window=24h", headers=headers)
+
+    assert ingested.status_code == 200
+    assert response.status_code == 200
+    workouts = response.json()["workouts"]
+    assert workouts["calories"] == 644
+    assert workouts["history"][0]["calories"] == 644
+    assert workouts["by_activity_type"][0]["calories"] == 644
+
+
+@pytest.mark.asyncio
 async def test_context_uses_total_calories_when_active_calories_are_missing(test_app):
     async with AsyncClient(
         transport=ASGITransport(app=test_app),

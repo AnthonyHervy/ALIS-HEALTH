@@ -312,23 +312,64 @@ test('shows workout calorie insight only when calorie data exists', () => {
   });
 });
 
-test('keeps calories as a separate today tile after sport when available', () => {
+test('prefers total workout calories over daily active calories for today sport', () => {
   const dashboard = dashboardFixture();
-  dashboard.windows.last_24h.activity.active_calories_kcal = 2365.62;
+  dashboard.windows.last_24h.activity.active_calories_kcal = 578;
+  dashboard.windows.last_24h.workouts.calories = 644;
   dashboard.windows.last_24h.workouts.history = [{
-    date: '2026-05-26',
-    start_time: '2026-05-26T08:00:00+00:00',
-    end_time: '2026-05-26T08:42:00+00:00',
+    date: '2026-06-16',
+    start_time: '2026-06-16T10:34:58+00:00',
+    end_time: '2026-06-16T11:17:00.523000+00:00',
+    activity_type: 'cycling',
+    duration_minutes: 42,
+    calories: 644,
+    distance_meters: 0
+  }];
+
+  expect(workoutCalorieInsight(dashboard.windows.last_24h)).toEqual({
+    label: 'Dépense calorique',
+    value: '644 kcal'
+  });
+  expect(todayWorkoutPresentation(dashboard.windows.last_24h).calorie).toEqual({
+    label: 'Dépense calorique',
+    value: '644 kcal'
+  });
+});
+
+test('does not present daily active calories as workout spend when sport calories are missing', () => {
+  const dashboard = dashboardFixture();
+  dashboard.windows.last_24h.activity.active_calories_kcal = 578;
+  dashboard.windows.last_24h.workouts.history = [{
+    date: '2026-06-16',
+    start_time: '2026-06-16T10:34:58+00:00',
+    end_time: '2026-06-16T11:17:00.523000+00:00',
     activity_type: 'cycling',
     duration_minutes: 42,
     calories: 0,
     distance_meters: 0
   }];
 
+  expect(workoutCalorieInsight(dashboard.windows.last_24h)).toBeNull();
+});
+
+test('keeps calories as a separate today tile after sport when available', () => {
+  const dashboard = dashboardFixture();
+  dashboard.windows.last_24h.activity.active_calories_kcal = 2365.62;
+  dashboard.windows.last_24h.workouts.calories = 644;
+  dashboard.windows.last_24h.workouts.history = [{
+    date: '2026-05-26',
+    start_time: '2026-05-26T08:00:00+00:00',
+    end_time: '2026-05-26T08:42:00+00:00',
+    activity_type: 'cycling',
+    duration_minutes: 42,
+    calories: 644,
+    distance_meters: 0
+  }];
+
   expect(todayWorkoutPresentation(dashboard.windows.last_24h)).toEqual({
     value: 'RPM',
     detail: 'RPM - 42 min',
-    calorie: { label: 'Dépense calorique', value: '2 366 kcal' }
+    calorie: { label: 'Dépense calorique', value: '644 kcal' }
   });
 });
 

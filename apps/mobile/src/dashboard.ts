@@ -189,7 +189,11 @@ export function nutritionInsight(context: OverviewContext, language: AppLanguage
 }
 
 export function workoutCalorieInsight(context: OverviewContext, language: AppLanguage = 'fr'): { label: string; value: string } | null {
-  const total = Number(context.activity.active_calories_kcal || 0);
+  const workoutSessions = Number(context.workouts?.sessions || context.workouts?.history?.length || 0);
+  const workoutCalories = Number(context.workouts?.calories || 0);
+  const total = context.window === '24h' && workoutSessions > 0
+    ? workoutCalories
+    : Number(context.activity.active_calories_kcal || 0);
   if (total <= 0) {
     return null;
   }

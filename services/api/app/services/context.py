@@ -487,12 +487,14 @@ class HealthContextService:
             source_config["effective_sources"].get("workouts"),
         )
         payloads = await self._raw_payloads(user_id)
+        resolved_calories = await self._workout_calories_by_interval(user_id, selected)
         for item in selected:
             item["_distance_meters"] = self._resolved_workout_distance_meters(
                 payloads,
                 item,
                 source_config["effective_sources"].get("workouts"),
             )
+            item["_calories"] = self._resolved_workout_calories(item, resolved_calories)
         by_type: dict[str, dict] = {}
         for item in selected:
             workout = item["workout"]
@@ -503,7 +505,7 @@ class HealthContextService:
             )
             bucket["sessions"] += 1
             bucket["duration_minutes"] += int(workout.duration_minutes or 0)
-            bucket["calories"] += int(workout.calories or 0)
+            bucket["calories"] += int(item.get("_calories") or 0)
             bucket["distance_meters"] += float(item.get("_distance_meters") or 0)
         latest = max(selected, key=lambda item: item["interval"].end_time) if selected else None
         history = [
@@ -513,7 +515,7 @@ class HealthContextService:
                 "end_time": json_timestamp(item["interval"].end_time),
                 "activity_type": canonical_workout_activity_type(item["workout"]),
                 "duration_minutes": int(item["workout"].duration_minutes or 0),
-                "calories": int(item["workout"].calories or 0),
+                "calories": int(item.get("_calories") or 0),
                 "distance_meters": float(item.get("_distance_meters") or 0),
             }
             for item in sorted(selected, key=lambda row: row["interval"].start_time, reverse=True)
@@ -522,7 +524,7 @@ class HealthContextService:
             "window": window,
             "sessions": len(selected),
             "duration_minutes": sum(int(item["workout"].duration_minutes or 0) for item in selected),
-            "calories": sum(int(item["workout"].calories or 0) for item in selected),
+            "calories": sum(int(item.get("_calories") or 0) for item in selected),
             "distance_meters": sum(float(item.get("_distance_meters") or 0) for item in selected),
             "running_distance_meters": sum(
                 float(item.get("_distance_meters") or 0)
@@ -1066,6 +1068,63 @@ class HealthContextService:
                 )
                 days[day]["steps_source"] = best.get("source")
                 days[day]["steps_recovered"] = True
+
+    async def _workout_calories_by_interval(self, user_id: str, selected: list[dict]) -> dict[str, dict[str, int]]:
+        if not selected:
+            return {}
+
+        start = min(item["interval"].start_time for item in selected) - timedelta(seconds=5)
+        end = max(item["interval"].end_time for item in selected) + timedelta(seconds=5)
+        result = await self.db.execute(
+            select(
+                HealthObservation.type,
+                HealthObservation.value,
+                HealthObservation.metadata_json,
+            ).where(
+                HealthObservation.user_id == user_id,
+                HealthObservation.timestamp >= start,
+                HealthObservation.timestamp <= end,
+                HealthObservation.type.in_(["calories", "active_calories"]),
+            )
+        )
+
+        resolved: dict[str, dict[str, int]] = defaultdict(dict)
+        for kind, value, metadata in result.all():
+            metadata = metadata or {}
+            origin = data_origin(metadata)
+            record_start = parse_iso(metadata.get("start_time"))
+            record_end = parse_iso(metadata.get("end_time"))
+            if not record_start or not record_end:
+                continue
+
+            for item in selected:
+                interval = item["interval"]
+                workout_origin = item.get("data_origin")
+                if workout_origin and origin and origin != workout_origin:
+                    continue
+                if self._same_instant(record_start, interval.start_time) and self._same_instant(record_end, interval.end_time):
+                    metric = "total" if kind == "calories" else "active"
+                    resolved[interval.id][metric] = max(
+                        int(round(float(value or 0))),
+                        int(resolved[interval.id].get(metric) or 0),
+                    )
+
+        return resolved
+
+    def _resolved_workout_calories(self, item: dict, resolved_calories: dict[str, dict[str, int]]) -> int:
+        stored = item["workout"].calories
+        if stored is not None:
+            return int(stored or 0)
+        candidates = resolved_calories.get(item["interval"].id) or {}
+        return int(candidates.get("total") or candidates.get("active") or 0)
+
+    def _same_instant(self, left: datetime, right: datetime) -> bool:
+        return abs((self._utc_naive(left) - self._utc_naive(right)).total_seconds()) <= 2
+
+    def _utc_naive(self, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
 
     async def _raw_payloads(self, user_id: str) -> list[dict]:
         result = await self.db.execute(
